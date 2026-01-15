@@ -1,0 +1,53 @@
+[project]
+name = "wo-381"
+version = "0.1.0"
+description = "Foundation compliance check using AI - RCC structural drawing analyzer"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # Core utilities
+    "numpy",
+    "requests",
+    "python-dotenv",
+    
+    # Jupyter / Notebook
+    "jupyter>=1.0.0",
+    "jupyterlab>=4.0.0",
+    "ipython>=8.0.0",
+    
+    # PDF handling
+    "PyPDF2>=3.0.0",
+    "pdfplumber>=0.9.0",
+    "convertapi",
+    "PyMuPDF",
+    
+    # LangChain & text splitting
+    "langchain>=0.2.0",
+    "langchain-community>=0.2.0",
+    "langchain-huggingface>=0.0.3",
+    "langchain-text-splitters>=0.0.1",
+    
+    # Vector DB
+    "chromadb>=0.5.0",
+    
+    # Embeddings
+    "sentence-transformers>=2.2.2",
+    "torch>=2.1.0",
+    
+    # LLM & Tokenizers
+    "openai",
+    "tiktoken>=0.7.0",
+    
+    # Image processing
+    "Pillow",
+    
+    # Web UI
+    "streamlit>=1.28.0",
+    
+    # PDF generation
+    "markdown>=3.4.0",
+    "reportlab",
+    
+    # Data analysis
+    "pandas>=2.0.0",
+]

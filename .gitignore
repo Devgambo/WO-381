@@ -1,0 +1,31 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Environment variables (API KEYS - NEVER COMMIT!)
+.env
+.env.local
+
+# User uploads and generated reports (optional - remove if you want to include)
+uploads/
+reports/
+first_extract/
+RESULT/
+FINAL.ipynb
+
+# Lock file (optional - can be large)
+# uv.lock
+
+# IDE settings
+.idea/
+.vscode/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
