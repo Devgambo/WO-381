@@ -1,0 +1,155 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg-primary: #0f1117;
+  --color-bg-secondary: #1a1d2e;
+  --color-bg-card: rgba(26, 29, 46, 0.85);
+  --color-bg-glass: rgba(255, 255, 255, 0.04);
+  --color-border-subtle: rgba(255, 255, 255, 0.08);
+  --color-border-hover: rgba(255, 255, 255, 0.15);
+  --color-text-primary: #e8eaf0;
+  --color-text-secondary: #9ba1b7;
+  --color-text-muted: #636a84;
+  --color-accent: #6366f1;
+  --color-accent-light: #818cf8;
+  --color-accent-glow: rgba(99, 102, 241, 0.25);
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+}
+
+@layer base {
+  html {
+    font-size: 15px;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background: var(--color-bg-primary);
+    color: var(--color-text-primary);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-border-subtle);
+    border-radius: 3px;
+  }
+}
+
+/* Spinner animation */
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin-slow {
+  animation: spin 0.8s linear infinite;
+}
+
+/* Fade-up entrance animation */
+@keyframes fadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-up {
+  animation: fadeUp 0.3s ease-out;
+}
+
+/* Markdown content styling */
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  color: var(--color-text-primary);
+  margin-top: 1.2rem;
+  margin-bottom: 0.5rem;
+  font-weight: 700;
+}
+
+.markdown-body h1 {
+  font-size: 1.3rem;
+}
+
+.markdown-body h2 {
+  font-size: 1.1rem;
+}
+
+.markdown-body h3 {
+  font-size: 0.95rem;
+}
+
+.markdown-body p {
+  margin-bottom: 0.6rem;
+  color: var(--color-text-secondary);
+}
+
+.markdown-body strong {
+  color: var(--color-text-primary);
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 1.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.markdown-body li {
+  margin-bottom: 0.25rem;
+  color: var(--color-text-secondary);
+}
+
+.markdown-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.82rem;
+}
+
+.markdown-body th {
+  background: rgba(99, 102, 241, 0.15);
+  color: var(--color-accent-light);
+  font-weight: 600;
+  text-align: left;
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--color-border-subtle);
+}
+
+.markdown-body td {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border-subtle);
+  color: var(--color-text-secondary);
+}
+
+.markdown-body tr:nth-child(even) td {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.markdown-body code {
+  background: rgba(99, 102, 241, 0.12);
+  color: var(--color-accent-light);
+  padding: 0.15rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.82rem;
+}
+
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--color-border-subtle);
+  margin: 1rem 0;
+}

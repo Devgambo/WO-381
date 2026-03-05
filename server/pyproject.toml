@@ -1,0 +1,54 @@
+[project]
+name = "wo-381-server"
+version = "0.1.0"
+description = "Foundation compliance check API - FastAPI backend"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # Web framework
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart>=0.0.9",
+
+    # Core utilities
+    "numpy",
+    "requests",
+    "python-dotenv",
+
+    # PDF handling
+    "PyPDF2>=3.0.0",
+    "pdfplumber>=0.9.0",
+    "PyMuPDF",
+
+    # LangChain & text splitting
+    "langchain>=0.2.0",
+    "langchain-community>=0.2.0",
+    "langchain-huggingface>=0.0.3",
+    "langchain-text-splitters>=0.0.1",
+
+    # Vector DB
+    "chromadb>=0.5.0",
+
+    # Embeddings
+    "sentence-transformers>=2.2.2",
+    "torch>=2.1.0",
+
+    # LLM & Tokenizers
+    "openai",
+    "tiktoken>=0.7.0",
+
+    # Image processing
+    "Pillow",
+
+    # PDF generation
+    "markdown>=3.4.0",
+    "reportlab",
+
+    # Data analysis
+    "pandas>=2.0.0",
+
+    # Database & Auth
+    "supabase>=2.0.0",
+    "PyJWT>=2.8.0",
+    "email-validator>=2.0.0",
+]
