@@ -93,10 +93,7 @@ The frontend application will now be running at `http://localhost:5173`.
 ## 📖 How It Works
 
 The system operates using a state-of-the-art multi-agent workflow:
-
-```mermaid
-![alt text](image.png)
-```
+<img width="1909" height="727" alt="Screenshot 2026-03-19 092558" src="https://github.com/user-attachments/assets/ee7f8098-2857-4f68-8547-d1e5b75ff036" />
 
 ### The Multi-Agent Pipeline breakdown:
 1. **Orchestrator** — The "manager." It quickly analyzes the visual file to determine if it's a foundation, slab, or beam, ensuring the correct domain logic is applied.
