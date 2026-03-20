@@ -37,11 +37,9 @@ This application uses **Vision AI** and **RAG (Retrieval-Augmented Generation)**
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/foundation-compliance-ai.git
-cd foundation-compliance-ai
+git clone https://github.com/Devgambo/WO-381.git
+cd WO-381
 
-# Copy environment template and add your API key
-cp .env.example .env
 # Edit .env and add: OPENROUTER_API_KEY=your_key_here
 
 # Install dependencies
@@ -143,7 +141,3 @@ This project is licensed under the MIT License.
 Contributions are welcome! Please feel free to submit a Pull Request.
 
 ---
-
-<p align="center">
-  Made with ❤️ for structural engineers
-</p>
