@@ -25,7 +25,7 @@ This application uses **Vision AI** and **RAG (Retrieval-Augmented Generation)**
 
 ---
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -38,75 +38,21 @@ This application uses **Vision AI** and **RAG (Retrieval-Augmented Generation)**
 ```bash
 # Clone the repository
 git clone https://github.com/Devgambo/WO-381.git
-cd WO-381
-
-# Edit .env and add: OPENROUTER_API_KEY=your_key_here
-
+cd server
 # Install dependencies
 uv sync
+# Edit .env and add: OPENROUTER_API_KEY=your_key_here
+uv run uvicorn main:app --reload
+
+cd client
+npm i
+npm run dev
 ```
-
-### Running the Application
-
-```bash
-uv run python -m streamlit run main.py
-```
-
-Then open http://localhost:8501 in your browser.
-
----
-
-## 📁 Project Structure
-
-```
-├── main.py                 # Streamlit web application
-├── llm_handler.py          # Vision LLM for PDF/image analysis
-├── llm_service.py          # RAG-based compliance report generation
-├── prompt.py               # System prompts for LLM calls
-├── embedding_service.py    # HuggingFace embeddings
-├── vector_db.py            # ChromaDB vector store wrapper
-├── data_loader.py          # Markdown file loader utility
-│
-├── SP34_md/                # IS code documents (markdown)
-├── chroma_db/              # Vector database (pre-built)
-│
-├── pyproject.toml          # Project dependencies
-├── .env.example            # Environment variables template
-└── README.md
-```
-
----
-
-## 🔧 Configuration
-
-| Environment Variable | Description | Required |
-|---------------------|-------------|----------|
-| `OPENROUTER_API_KEY` | Your OpenRouter API key | ✅ Yes |
-| `OPENROUTER_MODEL` | Model to use (default: `google/gemini-2.5-flash`) | No |
-| `GEMINI_API_KEY` | Direct Gemini API key (optional fallback) | No |
 
 ---
 
 ## 📖 How It Works
-
-```
-┌──────────────┐     ┌───────────────────┐     ┌──────────────────┐
-│  PDF/Image   │────▶│   Vision LLM      │────▶│  Initial Report  │
-│   Upload     │     │  (Gemini Flash)   │     │  (22-point check)│
-└──────────────┘     └───────────────────┘     └────────┬─────────┘
-                                                        │
-                                                        ▼
-┌──────────────┐     ┌───────────────────┐     ┌──────────────────┐
-│  User Input  │────▶│   RAG Pipeline    │◀────│   Vector DB      │
-│ (Corrections)│     │ (Final Analysis)  │     │ (IS Code Refs)   │
-└──────────────┘     └───────────────────┘     └──────────────────┘
-                              │
-                              ▼
-                     ┌──────────────────┐
-                     │  Final Report    │
-                     │  (MD/PDF Export) │
-                     └──────────────────┘
-```
+<img width="1909" height="727" alt="Screenshot 2026-03-19 092558" src="https://github.com/user-attachments/assets/097edfbc-aff0-4eaf-89d6-68d0cd63f12f" />
 
 ### Workflow
 
@@ -121,7 +67,7 @@ Then open http://localhost:8501 in your browser.
 
 | Component | Technology |
 |-----------|------------|
-| Web Framework | Streamlit |
+| Web Framework | React |
 | Vision LLM | Google Gemini 2.5 Flash (via OpenRouter) |
 | Embeddings | sentence-transformers/all-MiniLM-L6-v2 |
 | Vector DB | ChromaDB |
