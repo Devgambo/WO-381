@@ -77,7 +77,7 @@ def analyze_rcc_drawing_from_images(images, prompt_text):
         response = client.chat.completions.create(
             model="google/gemini-2.5-flash",
             messages=messages,
-            max_tokens=8000,
+            max_tokens=4000,
             temperature=0,
         )
         print("Received response from OpenRouter.")
@@ -155,3 +155,27 @@ def analyze_rcc_drawing(pdf_path, prompt_text):
         error_msg = str(e)
         print(f"An error occurred during the analysis: {error_msg}")
         raise ValueError(f"❌ Error analyzing PDF: {error_msg}") from e
+
+def run_specialist_agent(images, drawing_type: str) -> str:
+    """
+    Route images to the correct specialist agent based on drawing type.
+
+    Maps the drawing_type to the appropriate prompt from PROMPT_REGISTRY
+    and calls analyze_rcc_drawing_from_images.
+
+    Args:
+        images: List of PIL Image objects.
+        drawing_type: One of "foundation", "slab", "beam", or "unknown".
+
+    Returns:
+        str: The generated initial report markdown.
+    """
+    from prompt import PROMPT_REGISTRY, INITIAL_EXTRACTION_PROMPT
+
+    prompt = PROMPT_REGISTRY.get(drawing_type, INITIAL_EXTRACTION_PROMPT)
+
+    if drawing_type == "unknown":
+        print("⚠ Unknown drawing type — falling back to foundation prompt.")
+
+    print(f"🏗 Running specialist agent for: {drawing_type}")
+    return analyze_rcc_drawing_from_images(images, prompt)

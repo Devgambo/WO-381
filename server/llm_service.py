@@ -175,7 +175,7 @@ Please generate the final compliance report now."""
                     {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.1,  # Low temperature for consistent, factual output
-                max_tokens=8000,  # Sufficient for detailed reports
+                max_tokens=4000,  # Sufficient for detailed reports
             )
         except APIError as api_error:
             error_str = str(api_error)
@@ -266,6 +266,145 @@ Please generate the final compliance report now."""
         raise Exception(f"Failed to generate compliance report: {str(e)}")
 
 
+def classify_drawing_type(base64_images: list[str]) -> str:
+    """
+    Classify the drawing type using the Orchestrator prompt.
+
+    Sends the drawing images to the vision model and parses the JSON
+    response to determine if the drawing is foundation, slab, or beam.
+
+    Args:
+        base64_images: List of base64-encoded PNG image strings.
+
+    Returns:
+        str: One of "foundation", "slab", "beam", or "unknown".
+    """
+    import json
+    import re
+    from prompt import ORCHESTRATOR_PROMPT
+
+    try:
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": ORCHESTRATOR_PROMPT},
+                ] + [
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/png;base64,{img}"}
+                    } for img in base64_images
+                ]
+            }
+        ]
+
+        print("🔍 Orchestrator: Classifying drawing type...")
+        response = client.chat.completions.create(
+            model=OPENROUTER_MODEL,
+            messages=messages,
+            temperature=0,
+            max_tokens=100,
+        )
+
+        raw_text = response.choices[0].message.content.strip()
+        print(f"🔍 Orchestrator raw response: {raw_text}")
+
+        # Try to parse the JSON response
+        try:
+            result = json.loads(raw_text)
+            drawing_type = result.get("type", "unknown").lower().strip()
+        except json.JSONDecodeError:
+            # Fallback: try to extract with regex
+            match = re.search(r'"type"\s*:\s*"(\w+)"', raw_text)
+            if match:
+                drawing_type = match.group(1).lower().strip()
+            else:
+                print("⚠ Orchestrator: Could not parse response, defaulting to unknown.")
+                drawing_type = "unknown"
+
+        valid_types = {"foundation", "slab", "beam", "unknown"}
+        if drawing_type not in valid_types:
+            print(f"⚠ Orchestrator: Unexpected type '{drawing_type}', defaulting to unknown.")
+            drawing_type = "unknown"
+
+        print(f"✅ Orchestrator: Drawing classified as '{drawing_type}'.")
+        return drawing_type
+
+    except Exception as e:
+        print(f"❌ Orchestrator classification failed: {e}")
+        return "unknown"
+
+
+def validate_user_input(missing_fields: list[str], user_answers: dict) -> dict:
+    """
+    Validate user-supplied answers for missing data fields.
+
+    Uses the Validator Agent prompt to check that user-provided values
+    are plausible and correctly formatted for civil engineering data.
+
+    Args:
+        missing_fields: List of field names that were missing.
+        user_answers: Dict mapping field name → user-provided value.
+
+    Returns:
+        dict: {"valid": bool, "invalid_fields": list[dict]}
+    """
+    import json
+    import re
+    from prompt import VALIDATOR_PROMPT
+
+    try:
+        fields_json = json.dumps(missing_fields, indent=2)
+        answers_json = json.dumps(user_answers, indent=2, ensure_ascii=False)
+
+        prompt = VALIDATOR_PROMPT.format(
+            fields_json=fields_json,
+            answers_json=answers_json,
+        )
+
+        print("🔍 Validator Agent: Checking user-supplied data...")
+        response = client.chat.completions.create(
+            model=OPENROUTER_MODEL,
+            messages=[
+                {"role": "system", "content": "You are a strict data validation agent. Respond ONLY with valid JSON."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0,
+            max_tokens=2000,
+        )
+
+        raw_text = response.choices[0].message.content.strip()
+        print(f"🔍 Validator raw response: {raw_text}")
+
+        # Strip markdown fences if present
+        if raw_text.startswith("```"):
+            raw_text = re.sub(r'^```(?:json)?\s*', '', raw_text)
+            raw_text = re.sub(r'\s*```$', '', raw_text)
+
+        try:
+            result = json.loads(raw_text)
+        except json.JSONDecodeError:
+            # Try to extract JSON from the response
+            json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
+            if json_match:
+                result = json.loads(json_match.group())
+            else:
+                print("⚠ Validator: Could not parse response, assuming valid.")
+                return {"valid": True, "invalid_fields": []}
+
+        is_valid = result.get("valid", True)
+        invalid_fields = result.get("invalid_fields", [])
+
+        print(f"✅ Validator: valid={is_valid}, invalid_count={len(invalid_fields)}")
+        return {
+            "valid": is_valid,
+            "invalid_fields": invalid_fields,
+        }
+
+    except Exception as e:
+        print(f"❌ Validator error: {e}")
+        # On error, don't block the user — return valid
+        return {"valid": True, "invalid_fields": []}
 
 
 
@@ -273,7 +412,9 @@ Please generate the final compliance report now."""
 
 
 
-    #         user_prompt = f"""
+
+
+#user_prompt = f"""
     # ### Initial Preliminary Report with additioal user input
     # {Initial_report}
 

@@ -11,13 +11,13 @@ def get_embedding(query: str):
     try:
         embedding = embedding_model.embed_query(query)
         print(
-            f"✅ Successfully generated embedding for query: '{query[:15]}...' "
+            f"✅ Successfully generated embedding for query: '{query[:10]}...' "
             f"using model: '{embedding_model.model_name}'"
         )
         return embedding
     except Exception as e:
         print(
-            f"❌ Error generating embedding for query: '{query[:15]}...' "
+            f"❌ Error generating embedding for query: '{query[:10]}...' "
             f"with model: '{embedding_model.model_name}'"
         )
         raise e

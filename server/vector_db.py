@@ -36,12 +36,23 @@ class VectorStore:
         self,
         query_embeddings: List[List[float]],
         n_results: int = 5,
+        where: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
-        """Query by embeddings, return structured results."""
-        raw = self.collection.query(
-            query_embeddings=query_embeddings,
-            n_results=n_results
-        )
+        """Query by embeddings, return structured results.
+        
+        Args:
+            query_embeddings: List of embedding vectors to query with.
+            n_results: Number of results to return.
+            where: Optional metadata filter dict for ChromaDB (e.g., {"content_type": "text"}).
+        """
+        query_kwargs = {
+            "query_embeddings": query_embeddings,
+            "n_results": n_results,
+        }
+        if where:
+            query_kwargs["where"] = where
+
+        raw = self.collection.query(**query_kwargs)
 
         results = []
         for i in range(len(raw["ids"][0])):  # Chroma nests everything under index 0
@@ -53,19 +64,23 @@ class VectorStore:
             })
         return results
 
-    # def query_text(
-    #     self,
-    #     query_texts: List[str],
-    #     embedding_fn,
-    #     n_results: int = 5
-    # ) -> List[Dict[str, Any]]:
-    #     """Query directly with text input."""
-    #     query_embeddings = embedding_fn(query_texts)
-    #     return self.query(query_embeddings, n_results)
+    def query_by_text(
+        self,
+        query_text: str,
+        embedding_model,
+        n_results: int = 5,
+        where: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Query with raw text — handles embedding internally.
 
-
-
-
+        Args:
+            query_text: The text query to search for.
+            embedding_model: An embedding model with an embed_query(str) method.
+            n_results: Number of results to return.
+            where: Optional metadata filter dict.
+        """
+        query_embedding = embedding_model.embed_query(query_text)
+        return self.query([query_embedding], n_results=n_results, where=where)
 
 
 

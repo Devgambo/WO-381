@@ -1,10 +1,12 @@
 import { useState, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { fetchReports, downloadPdf } from "../api";
 import ReportDisplay from "../components/ReportDisplay";
 
 export default function HistoryPage() {
     const { token } = useAuth();
+    const navigate = useNavigate();
     const [reports, setReports] = useState([]);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -33,6 +35,12 @@ export default function HistoryPage() {
         if (!content) return;
         const filename = `${type}_report_${report.session_name.replace(/[^a-zA-Z0-9]/g, "_")}`;
         await downloadPdf(content, filename);
+    };
+
+    const handleResume = (report) => {
+        navigate("/dashboard", {
+            state: { resumeReport: report },
+        });
     };
 
     const formatDate = (dateStr) => {
@@ -169,6 +177,15 @@ export default function HistoryPage() {
                                     >
                                         👁️ View
                                     </button>
+                                    {report.initial_report && !report.final_report && (
+                                        <button
+                                            onClick={() => handleResume(report)}
+                                            className="px-3 py-1.5 text-xs font-medium text-amber-300 border border-amber-500/30 rounded-lg bg-transparent hover:bg-amber-500/10 transition-all cursor-pointer"
+                                            title="Resume — provide missing data and generate final report"
+                                        >
+                                            ▶️ Resume
+                                        </button>
+                                    )}
                                     {report.initial_report && (
                                         <button
                                             onClick={() => handleDownload(report, "initial")}

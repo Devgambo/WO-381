@@ -2,8 +2,10 @@ import os
 import time
 import re
 import io
+import json
 import shutil
 from typing import Optional
+from pydantic import BaseModel
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -49,9 +51,9 @@ def get_embedding_model():
 
 # --- FastAPI App ---
 app = FastAPI(
-    title="Foundation Compliance Check API",
-    description="AI-powered RCC structural drawing compliance analysis",
-    version="1.0.0",
+    title="Structural Compliance Checker",
+    description="AI-powered multi-agent RCC structural drawing compliance analysis (Foundations, Slabs, Beams)",
+    version="2.0.0",
 )
 
 app.add_middleware(
@@ -64,8 +66,7 @@ app.add_middleware(
 
 app.include_router(auth_router)
 
-
-# ---------- PDF-to-Markdown helper (from original main.py) ----------
+# ---------- PDF-to-Markdown helper ----------
 def markdown_to_pdf(markdown_text: str, output_path: str):
     """
     Converts markdown text to PDF using reportlab.
@@ -219,10 +220,43 @@ def markdown_to_pdf(markdown_text: str, output_path: str):
         return False, f"PDF conversion failed: {str(e)}"
 
 
-# ────────────────────────────────────────────────────────────
-# API Routes
-# ────────────────────────────────────────────────────────────
+#--------- missing field extractor----------
+def _extract_missing_fields(report: str) -> list[str]:
+    """Parse the 'Missing or Wrong Information' section from an initial report."""
+    missing = []
+    in_section = False
+    for line in report.splitlines():
+        stripped = line.strip()
+        # Detect the section header
+        if re.search(r'missing.*(?:wrong|information)', stripped, re.IGNORECASE):
+            in_section = True
+            continue
+        # Stop at next heading
+        if in_section and stripped.startswith("#"):
+            break
+        if not in_section:
+            continue
+        # Skip empty lines, table rows, and separator lines
+        if not stripped:
+            continue
+        if stripped.startswith("|"):
+            continue
+        if re.match(r'^---+$|^===+$|^\*\*\*+$', stripped):
+            continue
+        # Remove list markers (1., 2., -, *)
+        clean = re.sub(r'^\d+\.\s*|^[-*+]\s*', '', stripped).strip()
+        if clean and clean.lower() not in ('none', 'n/a', 'nil'):
+            # Extract just the label before the colon for cleaner field names
+            if ':' in clean:
+                label = clean.split(':', 1)[0].strip()
+                missing.append(label)
+            else:
+                missing.append(clean)
 
+    print("\n\nmissing data", missing)
+    return missing
+
+# -------- Routes -------- 
 @app.get("/")
 async def root():
     return {"message": "Foundation Compliance Check API", "status": "running"}
@@ -259,11 +293,14 @@ async def generate_initial_report(
     current_user: dict = Depends(get_current_user),
 ):
     """
-    Upload one or more files (PDF or images) and generate the initial
-    compliance report. Requires authentication.
+    Upload one or more files (PDF or images).
+    1. Orchestrator classifies the drawing type (foundation/slab/beam).
+    2. Specialist agent generates the initial compliance report.
+    3. Missing fields are extracted from the report.
+    Requires authentication.
     """
-    from llm_handler import analyze_rcc_drawing, analyze_rcc_drawing_from_images
-    from prompt import INITIAL_EXTRACTION_PROMPT
+    from llm_handler import pdf_to_images, pil_to_base64, run_specialist_agent
+    from llm_service import classify_drawing_type
 
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
@@ -271,16 +308,18 @@ async def generate_initial_report(
     first_ext = os.path.splitext(files[0].filename or "")[1].lower()
 
     try:
+        # --- Step 1: Convert to PIL images ---
+        pil_images = []
+        file_names = []
+
         if first_ext == ".pdf":
             pdf_bytes = await files[0].read()
             tmp_path = os.path.join(UPLOADS_DIR, f"{int(time.time())}_{files[0].filename}")
             with open(tmp_path, "wb") as f:
                 f.write(pdf_bytes)
-            initial_report = analyze_rcc_drawing(tmp_path, INITIAL_EXTRACTION_PROMPT)
+            pil_images = pdf_to_images(tmp_path)
             file_names = [files[0].filename]
         else:
-            pil_images = []
-            file_names = []
             for upload in files:
                 img_bytes = await upload.read()
                 pil_img = Image.open(io.BytesIO(img_bytes))
@@ -289,9 +328,15 @@ async def generate_initial_report(
                 pil_images.append(pil_img)
                 file_names.append(upload.filename)
 
-            initial_report = analyze_rcc_drawing_from_images(
-                pil_images, INITIAL_EXTRACTION_PROMPT
-            )
+        # --- Step 2: Orchestrator classifies drawing type ---
+        base64_imgs = [pil_to_base64(img) for img in pil_images]
+        drawing_type = classify_drawing_type(base64_imgs)
+
+        # --- Step 3: Specialist agent generates initial report ---
+        initial_report = run_specialist_agent(pil_images, drawing_type)
+
+        # --- Step 4: Extract missing fields from report ---
+        missing_fields = _extract_missing_fields(initial_report)
 
         # Persist to disk
         timestamp = int(time.time())
@@ -300,19 +345,22 @@ async def generate_initial_report(
         with open(report_path, "w", encoding="utf-8") as f:
             f.write(initial_report)
 
-        # Save to Supabase DB
+        # Save to Supabase DB (with drawing_type)
         session_name = ", ".join(file_names)
         supabase = get_supabase_client()
         db_result = supabase.table("reports").insert({
             "user_id": current_user["id"],
             "session_name": session_name,
             "initial_report": initial_report,
+            "drawing_type": drawing_type,
         }).execute()
 
         report_id = db_result.data[0]["id"] if db_result.data else None
 
         return {
             "report": initial_report,
+            "drawing_type": drawing_type,
+            "missing_fields": missing_fields,
             "file_names": file_names,
             "saved_report": report_filename,
             "report_id": report_id,
@@ -321,6 +369,8 @@ async def generate_initial_report(
     except HTTPException:
         raise
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -328,12 +378,13 @@ async def generate_initial_report(
 async def generate_final_report(
     initial_report: str = Form(...),
     user_input: str = Form(...),
+    drawing_type: str = Form("foundation"),
     report_id: str = Form(""),
     current_user: dict = Depends(get_current_user),
 ):
     """
     Generate the final compliance report using RAG.
-    Expects the initial_report markdown and the user_input text.
+    Expects the initial_report markdown, user_input text, and drawing_type.
     Requires authentication.
     """
     from llm_service import generate_compliance_report
@@ -347,6 +398,7 @@ async def generate_final_report(
 
     try:
         refinement_prompt = REFINEMENT_PROMPT_TEMPLATE.format(
+            drawing_type=drawing_type,
             previous_analysis=initial_report,
             user_input=user_input,
         )
@@ -388,6 +440,81 @@ async def generate_final_report(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ────────────────────────────────────────────────────────────
+# Validator Agent API
+# ────────────────────────────────────────────────────────────
+
+class ValidateInputRequest(BaseModel):
+    missing_fields: list[str]
+    user_answers: dict
+    report_id: str = ""
+
+@app.post("/api/validate-input")
+async def validate_input(
+    body: ValidateInputRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Validate user-supplied answers for missing data fields.
+    Returns {valid: bool, invalid_fields: list}.
+    Requires authentication.
+    """
+    from llm_service import validate_user_input as do_validate
+
+    if not body.missing_fields or not body.user_answers:
+        raise HTTPException(
+            status_code=400,
+            detail="Both missing_fields and user_answers are required",
+        )
+
+    try:
+        result = do_validate(body.missing_fields, body.user_answers)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ────────────────────────────────────────────────────────────
+# RAG Query API
+# ────────────────────────────────────────────────────────────
+
+@app.get("/api/rag/query")
+async def rag_query(
+    q: str,
+    k: int = 5,
+    content_type: Optional[str] = None,
+):
+    """
+    Query the IS codes vector database directly.
+    Returns the top-k matching chunks.
+    """
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="Query string 'q' is required")
+
+    try:
+        vectordb = get_vectordb()
+        embedding_model = get_embedding_model()
+
+        where = None
+        if content_type and content_type in ("text", "table", "image_description"):
+            where = {"content_type": content_type}
+
+        results = vectordb.query_by_text(
+            query_text=q,
+            embedding_model=embedding_model,
+            n_results=min(k, 20),  # cap at 20
+            where=where,
+        )
+
+        return {
+            "query": q,
+            "count": len(results),
+            "results": results,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.post("/api/download-pdf")
 async def download_pdf(
     markdown_content: str = Form(...),
@@ -423,7 +550,7 @@ async def list_reports(current_user: dict = Depends(get_current_user)):
     try:
         supabase = get_supabase_client()
         result = supabase.table("reports") \
-            .select("id, session_name, initial_report, final_report, created_at") \
+            .select("id, session_name, drawing_type, initial_report, final_report, created_at") \
             .eq("user_id", current_user["id"]) \
             .order("created_at", desc=True) \
             .execute()

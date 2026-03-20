@@ -1,8 +1,26 @@
 from pathlib import Path
+import re
+
+
+def _detect_content_type(content: str) -> str:
+    """Heuristic to classify a chunk's content type."""
+    stripped = content.strip()
+    # If the chunk has markdown table pipes on most lines, it's a table
+    lines = [l for l in stripped.splitlines() if l.strip()]
+    if lines:
+        pipe_lines = sum(1 for l in lines if l.strip().startswith("|"))
+        if pipe_lines / len(lines) > 0.5:
+            return "table"
+    # If it references figures/images or is an image description
+    if re.search(r'\b(fig(?:ure)?\.?\s*\d|image|diagram|sketch|photo|drawing)\b', stripped, re.IGNORECASE):
+        return "image_description"
+    return "text"
+
 
 def read_md_files_from_folder(folder_path):
     """
     Reads all .md files from a single, non-recursive folder.
+    Each file dict now includes a 'content_type' field.
     """
     md_files_data = []
 
@@ -22,7 +40,8 @@ def read_md_files_from_folder(folder_path):
             md_files_data.append({
                 'folder_name': directory.name,
                 'file_name': file_path.name,
-                'content': content
+                'content': content,
+                'content_type': _detect_content_type(content),
             })
         except Exception as e:
             print(f"Error reading file {file_path.name}: {str(e)}")
