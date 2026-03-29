@@ -9,7 +9,7 @@ Your task is to analyze an RCC structural drawing PDF and check its compliance a
 Here is the step-by-step process you must follow:
 Step 0: Initial Document Check
 - 0.1: Verify that the document is an RCC structural drawing of "FOUNDATIONS" only. If not, mention that it is not a valid drawing and exit.
-- 0.2: Find the site location. This is crucial for many checks. If it's not mentioned, flag this as "Missing Information". Do not confuse the consultant's or architect's location with the site location.
+- 0.2: Find the site location. This is crucial for many checks. If it's not mentioned, flag this as "Missing Information" (as "location"). Do not confuse the consultant's or architect's location with the site location.
 - 0.3: Confirm that all compliance checks are based only on IS 456:2000 and SP 34.
 
 Step 1: Locate the "NOTES" Section
@@ -214,6 +214,8 @@ If the drawing does not clearly fit any of the three categories, respond with:
 # SLAB EXTRACTION PROMPT
 # ──────────────────────────────────────────────────────────────
 SLAB_EXTRACTION_PROMPT = """
+SLAB
+
 You are an expert assistant specializing in Indian civil engineering standards for Reinforced Concrete Cement (RCC) design.
 Your task is to analyze an RCC structural drawing PDF of **SLABS** and check its compliance against IS 456:2000 and SP 34.
 
@@ -237,96 +239,110 @@ Checklist of Items:
 1.  Grade of Concrete:
     - Extract the grade (e.g., M20, M25).
     - Compliance: Must be suitable for the site's environmental exposure conditions as per IS 456:2000 Table 5.
+    - Additional Check: Minimum grade for RCC slabs should not be less than M20.
     - Action: If missing, non-compliant, or cannot be verified without a site location, flag it.
 
 2.  Grade of Steel / Reinforcement Bars:
     - Extract type (e.g., HYSD/TMT), grade (e.g., Fe 415, Fe 500), and any IS code reference.
-    - Compliance: Note the grade. Fe 500 or higher is standard.
+    - Compliance: Fe 500 or higher is standard. Must conform to IS 1786.
     - Action: If missing or grade is not specified, flag it.
 
 3.  Slab Type (One-way / Two-way):
-    - Determine the slab type based on aspect ratio (Ly/Lx). If Ly/Lx <= 2, it is a two-way slab (IS 456 Cl. 24.4).
-    - Extract clear spans in both directions.
+    - Determine slab type based on aspect ratio (Ly/Lx). If Ly/Lx <= 2, it is a two-way slab (IS 456 Cl. 24.4).
+    - Extract clear spans in both directions (center-to-center minus support width).
+    - Additional Check: Confirm support condition (simply supported / continuous).
     - Action: If spans are not mentioned or slab type is ambiguous, flag it.
 
 4.  Slab Thickness:
     - Extract overall thickness (D) and effective depth (d).
     - Compliance: Check against span-to-depth ratio limits (IS 456 Cl. 23.2).
-      - Simply supported: L/d <= 20
-      - Continuous: L/d <= 26
-      - Cantilever: L/d <= 7
+    - Additional Check: Ensure minimum thickness ≥ 100 mm (practical slab design guideline).
     - Action: If thickness is missing or non-compliant, flag it.
 
 5.  Clear Cover:
     - Extract cover values.
     - Compliance (IS 456 Cl. 26.4):
-      - Slab cover: Minimum 20mm (mild exposure), 30mm (moderate), varies by exposure condition.
+      - Slab cover: Minimum 20mm (mild exposure), 30mm (moderate), etc.
+    - Additional Check: Cover should not exceed 75mm unnecessarily.
     - Action: If missing or non-compliant, flag it.
 
 6.  Main Reinforcement (Bottom):
     - Extract bar diameter, spacing, and direction.
     - Compliance:
       - Minimum steel: 0.12% of bD for HYSD bars (IS 456 Cl. 26.5.2.1).
-      - Maximum spacing: 3d or 300mm, whichever is smaller (IS 456 Cl. 26.3.3).
+      - Maximum spacing: 3d or 300mm, whichever is smaller.
       - Minimum bar diameter: 8mm.
+    - Additional Check: Check if spacing consistency is maintained across slab panel.
     - Action: If missing or non-compliant, flag it.
 
 7.  Distribution Steel:
-    - Extract bar diameter, spacing, and direction (perpendicular to main steel).
-    - Compliance: Minimum 0.12% of bD for HYSD bars.
-    - Maximum spacing: 5d or 450mm, whichever is smaller.
+    - Extract bar diameter, spacing, and direction.
+    - Compliance:
+      - Minimum 0.12% of bD.
+      - Maximum spacing: 5d or 450mm.
+    - Additional Check: Must be perpendicular to main reinforcement.
     - Action: If missing or non-compliant, flag it.
 
 8.  Top Reinforcement (at Supports):
-    - Check if extra top bars or cranked bars are provided at continuous supports.
-    - Compliance: For continuous slabs, top steel at support is mandatory (IS 456 Cl. 26.5.2).
-    - Action: If the slab is continuous and top reinforcement is missing, flag it.
+    - Check if extra top bars or cranked bars are provided.
+    - Compliance: Mandatory for continuous slabs.
+    - Additional Check: Verify anchorage length into supports.
+    - Action: If missing, flag it.
 
 9.  Lap Length:
-    - Extract the value (e.g., "50d" or specific mm).
-    - Compliance: Should be at least 50d or comply with SP 34 guidelines.
+    - Extract value (e.g., 50d).
+    - Compliance: ≥ 50d or as per SP 34.
+    - Additional Check: Ensure laps are staggered and not all at same section.
     - Action: If missing or non-compliant, flag it.
 
 10. Development Length (Ld):
-    - Extract the value.
-    - Compliance: A common value is 50 times the bar diameter (50d).
+    - Extract value.
+    - Compliance: As per IS 456 Cl. 26.2 (not just assumed 50d).
+    - Additional Check: Verify Ld based on stress and bond conditions if data available.
     - Action: If missing or incorrect, flag it.
 
 11. Deflection Check:
-    - Check if span-to-depth ratio is within limits after applying modification factors (IS 456 Cl. 23.2).
-    - Action: If data is insufficient to verify, flag it.
+    - Check span-to-depth ratio with modification factors.
+    - Additional Check: Consider tension reinforcement percentage if available.
+    - Action: If insufficient data, flag it.
 
 12. Seismic Zone and Wind Load:
-    - Extract the seismic zone and wind load details.
-    - Compliance: This information is mandatory.
+    - Extract details.
+    - Compliance: Must reference IS 1893 (seismic) and IS 875 (wind).
     - Action: If not mentioned, flag it.
 
 13. Loading Details:
-    - Extract dead load (self-weight), live load, floor finish, and factored load.
-    - Compliance: Live load should match IS 875 Part 2 for the building type.
-    - Action: If not mentioned, flag it.
+    - Extract dead load, live load, floor finish, and factored load.
+    - Compliance: Live load must match IS 875 Part 2.
+    - Additional Check: Ensure load combinations are mentioned.
+    - Action: If missing, flag it.
 
 14. Slab Schedule:
-    - Verify that the drawing is consistent with a "SCHEDULE OF SLABS" table if present.
-    - Check for consistency between plan markings and the schedule.
-    - Action: If the table is missing or inconsistent, flag it.
+    - Verify consistency between plan and schedule.
+    - Additional Check: Check marking labels (S1, S2, etc.).
+    - Action: If missing or inconsistent, flag it.
 
 15. Opening / Cutout Details:
-    - Check if any openings in the slab are detailed with extra reinforcement around them.
-    - Compliance: Openings > 150mm need trimmer bars (SP 34).
-    - Action: If openings exist without extra reinforcement details, flag it.
+    - Check reinforcement around openings.
+    - Compliance: Openings >150mm require trimming bars.
+    - Additional Check: Verify stress redistribution detailing.
+    - Action: If missing, flag it.
 
 16. Construction Joint / Pour Sequence:
-    - Note if construction joint locations are specified.
-    - Action: If not mentioned for large slab areas, flag it.
+    - Check if joints are specified.
+    - Additional Check: Verify joints are placed at low moment regions.
+    - Action: If missing, flag it.
 
 17. Bar Bending Schedule (BBS):
-    - Check if a bar bending schedule is provided or referenced.
-    - Action: If not present, flag it.
+    - Check presence or reference.
+    - Additional Check: Ensure bar marks match drawing.
+    - Action: If missing, flag it.
 
-18. Edge/Corner Reinforcement (Two-way Slabs):
-    - For two-way slabs, check if torsion reinforcement is provided at corners (IS 456 Cl. D-1.8).
-    - Action: If two-way slab but corner reinforcement is not detailed, flag it.
+18. Edge/Corner Reinforcement:
+    - For two-way slabs, check torsion reinforcement.
+    - Compliance: IS 456 Cl. D-1.8.
+    - Additional Check: Verify % of main reinforcement provided.
+    - Action: If missing, flag it.
 
 Step 4: Output Format
 - Present the results as a clean, well-structured checklist in Markdown format.
@@ -392,131 +408,191 @@ Here is the step-by-step process you must follow:
 
 Step 0: Initial Document Check
 - 0.1: Verify that the document is an RCC structural drawing of "BEAMS" only. If not, mention that it is not a valid beam drawing and exit.
-- 0.2: Find the site location. This is crucial for exposure condition checks. If it's not mentioned, flag this as "Missing Information". Do not confuse the consultant's or architect's location with the site location.
+- 0.1.1: Ensure drawing contains beam layout, beam sections, reinforcement details, or beam schedule. If only architectural layout → reject.
+- 0.1.2: If mixed drawings exist (slab/column/foundation), extract only beam-related data.
+- 0.2: Find the site location. This is crucial for exposure condition checks. If it's not mentioned, flag this as "Missing Information".
+- 0.2.1: If location suggests aggressive environment (coastal/industrial), assume severe exposure conservatively.
 - 0.3: Confirm that all compliance checks are based only on IS 456:2000 and SP 34.
+- 0.4: Identify drawing scale, units (mm/m), and levels. If unclear → "Cannot Verify".
+- 0.5: Identify beam support conditions (simply supported / continuous / cantilever).
 
 Step 1: Locate the "NOTES" Section
-- Find the specific "NOTES" section in the drawing. Do not confuse it with "GENERAL NOTES". If this section is missing, flag it.
+- Find the specific "NOTES" section. Do not confuse with "GENERAL NOTES".
+- If multiple exist, prioritize "STRUCTURAL NOTES".
 
 Step 2 & 3: Extract and Verify Design Parameters from "NOTES"
-- For each item below, extract the value from the notes.
-- If the information is present, check it against the compliance rule.
-- If the information is missing or fails the compliance check, flag it as "Missing or Wrong Information".
+
+General Rule:
+- If multiple values → choose conservative.
+- If conflicting → "Non-Compliant".
+- If inferred but not explicit → "Cannot Verify".
 
 Checklist of Items:
 
 1.  Grade of Concrete:
-    - Extract the grade (e.g., M20, M25).
-    - Compliance: Must be suitable for the site's environmental exposure conditions as per IS 456:2000 Table 5.
-    - Action: If missing, non-compliant, or cannot be verified without a site location, flag it.
+    - Extract grade
+    - Compliance:
+        - Minimum M20
+        - As per exposure (IS 456 Table 5)
+    - Additional Check:
+        - For heavily loaded beams → M25+
+    - Action: If missing → flag
 
 2.  Grade of Steel / Reinforcement Bars:
-    - Extract type (e.g., HYSD/TMT), grade (e.g., Fe 415, Fe 500), and any IS code reference.
-    - Compliance: Note the grade. Fe 500 or higher is standard.
-    - Action: If missing or grade is not specified, flag it.
+    - Extract type, grade, IS code
+    - Compliance: Fe 500+ preferred
+    - Additional Check:
+        - Check ductility requirement (important in seismic zones)
+    - Action: If missing → flag
 
 3.  Beam Dimensions:
-    - Extract width (b), overall depth (D), and span (L) for each beam.
-    - Compliance: Minimum width should be 200mm for structural beams. Depth-to-width ratio should be reasonable (typically D/b <= 4).
-    - Action: If dimensions are missing or seem incorrect, flag it.
+    - Extract b, D, span L
+    - Compliance:
+        - Minimum width ≥ 200mm
+        - D/b ≤ 4 (practical)
+    - Additional Check:
+        - Check span consistency with layout
+    - Action: If missing → flag
 
 4.  Effective Depth:
-    - Extract or calculate effective depth (d = D - cover - dia/2).
-    - Compliance: Must be consistent with the specified cover and bar diameter.
-    - Action: If not derivable, flag it.
+    - Extract/calculate d
+    - Compliance: Must align with cover + bar dia
+    - Action: If not derivable → flag
 
 5.  Clear Cover:
-    - Extract cover values.
-    - Compliance (IS 456 Cl. 26.4):
-      - Beam cover: Minimum 25mm (mild exposure), 30mm (moderate), increases with exposure severity.
-    - Action: If missing or non-compliant, flag it.
+    - Extract values
+    - Compliance:
+        - 25mm (mild), 30mm (moderate)
+    - Additional Check:
+        - Cover should not be excessive (>75mm)
+    - Action: If missing → flag
 
 6.  Main Tension Reinforcement (Bottom):
-    - Extract bar diameter, number of bars, and area of steel.
+    - Extract bars, dia, spacing
     - Compliance:
-      - Minimum steel: 0.85*b*d / fy (IS 456 Cl. 26.5.1.1).
-      - Maximum steel: 4% of b*D (IS 456 Cl. 26.5.1.1).
-      - Minimum 2 bars continuous through the span.
-    - Action: If missing or non-compliant, flag it.
+        - Min steel = 0.85bd/fy
+        - Max steel = 4% of bD
+        - Minimum 2 bars continuous
+    - Additional Check:
+        - Check anchorage into supports
+    - Action: If missing → flag
 
 7.  Compression Reinforcement (Top at Midspan):
-    - Extract details at midspan if doubly reinforced.
-    - Compliance: If provided, should be at least 2 bars of minimum 12mm diameter.
-    - Action: If the beam is doubly reinforced but top steel is not shown, flag it.
+    - Extract details
+    - Compliance:
+        - ≥ 2 bars (≥12mm)
+    - Additional Check:
+        - Required for doubly reinforced beams
+    - Action: If missing → flag
 
 8.  Top Reinforcement at Supports:
-    - Check for extra top bars at supports for hogging moment.
-    - Compliance: For continuous beams, top steel at supports is mandatory.
-    - Action: If missing for continuous beams, flag it.
+    - Check hogging reinforcement
+    - Compliance: Mandatory for continuous beams
+    - Additional Check:
+        - Check proper anchorage length
+    - Action: If missing → flag
 
 9.  Shear Reinforcement (Stirrups):
-    - Extract stirrup diameter, spacing, and type (2-legged, 4-legged, etc.).
-    - Compliance (IS 456 Cl. 26.5.1.6):
-      - Minimum stirrup: Asv >= 0.4*b*sv / (0.87*fy).
-      - Maximum spacing: 0.75*d or 300mm, whichever is smaller.
-      - Reduced spacing near supports (within 2d from face of support).
-      - Minimum diameter: 8mm.
-    - Action: If missing or non-compliant, flag it.
-
+    - Extract dia, spacing, type
+    - Compliance:
+        - Max spacing = 0.75d or 300mm
+        - Min dia = 8mm
+    - Additional Check:
+        - Closer spacing near supports (within 2d)
+        - Check shear capacity vs demand if data available
+    - Action: If missing → flag
+    
 10. Lap Length:
-    - Extract the value (e.g., "50d" or specific mm).
-    - Compliance: Should be at least 50d or comply with SP 34 guidelines.
-    - Tension lap should not be at midspan bottom, and compression lap not at support top.
-    - Action: If missing or non-compliant, flag it.
+    - Extract value
+    - Compliance: ≥ 50d
+    - Additional Check:
+        - Avoid lap in high stress regions
+        - Stagger laps
+    - Action: If missing → flag
 
 11. Development Length (Ld):
-    - Extract the value.
-    - Compliance: A common value is 50 times the bar diameter (50d) (IS 456 Cl. 26.2.1).
-    - Check anchorage at supports — Ld should be available beyond the face of support.
-    - Action: If missing or incorrect, flag it.
+    - Extract value
+    - Compliance: As per IS 456 Cl. 26.2
+    - Additional Check:
+        - Ld beyond support face
+    - Action: If missing → flag
 
 12. Deflection Check:
-    - Check if span-to-depth ratio is within limits (IS 456 Cl. 23.2):
-      - Simply supported: L/d <= 20
-      - Continuous: L/d <= 26
-      - Cantilever: L/d <= 7
-    - Apply modification factors for tension and compression steel.
-    - Action: If data is insufficient to verify, flag it.
+    - Check L/d limits
+    - Additional Check:
+        - Include modification factors
+    - Action: If insufficient data → flag
 
 13. Beam Schedule:
-    - Verify that the drawing is consistent with a "BEAM SCHEDULE" table if present.
-    - Check for consistency between plan markings, section details, and the schedule.
-    - Action: If the table is missing or inconsistent, flag it.
+    - Verify consistency
+    - Additional Check:
+        - Check beam IDs (B1, B2, etc.)
+    - Action: If missing → flag
 
 14. Seismic Zone and Wind Load:
-    - Extract the seismic zone and wind load details.
-    - Compliance: This information is mandatory.
-    - Action: If not mentioned, flag it.
+    - Extract values
+    - Compliance: IS 1893 + IS 875
+    - Action: If missing → flag
 
-15. Seismic Detailing (if applicable):
-    - For seismic zones III, IV, V — check ductile detailing (IS 13920).
-    - Close spacing of stirrups at beam-column joints (within 2d).
-    - Minimum 2 bars continuous top and bottom throughout the span.
-    - Action: If in seismic zone >= III but ductile detailing is absent, flag it.
+15. Seismic Detailing:
+    - Check IS 13920 provisions
+    - Additional Check:
+        - Closely spaced stirrups at joints
+        - Continuous bars
+    - Action: If missing → flag
 
 16. Side Face Reinforcement:
-    - For beams with depth > 750mm, check for side face reinforcement (IS 456 Cl. 26.5.1.3).
-    - Compliance: Total area >= 0.1% of web area, distributed equally on both faces.
-    - Action: If beam depth > 750mm and side face reinforcement is not shown, flag it.
+    - For D > 750mm
+    - Compliance:
+        - ≥ 0.1% web area
+    - Action: If missing → flag
 
-17. Bar Bending Schedule (BBS):
-    - Check if a bar bending schedule is provided or referenced.
-    - Action: If not present, flag it.
 
-18. Torsion Reinforcement:
-    - If the beam is subjected to torsion, check for closed stirrups and longitudinal torsion steel (IS 456 Cl. 41).
-    - Action: If torsion is expected but no provision is shown, flag it.
+17. Torsion Reinforcement:
+    - Check if torsion exists
+    - Compliance: IS 456 Cl. 41
+    - Additional Check:
+        - Closed stirrups + longitudinal bars
+    - Action: If missing → flag
 
-19. Bar Curtailment:
-    - Check if curtailment of bars is as per IS 456 Cl. 26.2.3.
-    - Bars should extend at least Ld beyond the theoretical cut-off point or d or 12 times dia, whichever is greater.
-    - At least 1/3 positive moment bars should extend into the support.
-    - Action: If curtailment details are missing or non-compliant, flag it.
+18. Bar Curtailment:
+    - Check extension rules
+    - Compliance:
+        - Extend ≥ Ld or d or 12ϕ
+    - Additional Check:
+        - At least 1/3 bars into support
+    - Action: If missing → flag
 
-20. Bearing at Supports:
-    - Check minimum bearing at supports (typically 200mm or beam width, whichever is more).
-    - Action: If not specified, flag it.
+19. Bearing at Supports:
+    - Extract bearing length
+    - Compliance:
+        - ≥ 200mm (typical)
+    - Additional Check:
+        - Check load transfer adequacy
+    - Action: If missing → flag
 
+20. Shear Check (NEW):
+    - Verify shear capacity vs demand
+    - Compliance: IS 456 Cl. 40
+    - Action: If not addressed → flag
+
+21. Moment Capacity Check (NEW):
+    - Check Mu vs capacity
+    - Action: If not verifiable → flag
+
+22. Crack Control (NEW):
+    - Check spacing limits for crack control
+    - Action: If ignored → flag
+
+23. Anchorage & Hook Details (NEW):
+    - Check bends/hooks (90°, 135°)
+    - Compliance: SP 34
+    - Action: If missing → flag
+
+24. Load Path (NEW):
+    - Verify load transfer (slab → beam → column)
+    - Action: If unclear → flag
+    
 Step 4: Output Format
 - Present the results as a clean, well-structured checklist in Markdown format.
 - Strictly follow the exact Markdown skeleton shown below.

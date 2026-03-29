@@ -228,7 +228,7 @@ def _extract_missing_fields(report: str) -> list[str]:
     for line in report.splitlines():
         stripped = line.strip()
         # Detect the section header
-        if re.search(r'missing.*(?:wrong|information)', stripped, re.IGNORECASE):
+        if stripped.startswith("#") and re.search(r'missing.*(?:wrong|information)', stripped, re.IGNORECASE):
             in_section = True
             continue
         # Stop at next heading
@@ -245,11 +245,27 @@ def _extract_missing_fields(report: str) -> list[str]:
             continue
         # Remove list markers (1., 2., -, *)
         clean = re.sub(r'^\d+\.\s*|^[-*+]\s*', '', stripped).strip()
+        # Strip markdown bold markers
+        clean = clean.replace('**', '')
         if clean and clean.lower() not in ('none', 'n/a', 'nil'):
-            # Extract just the label before the colon for cleaner field names
             if ':' in clean:
-                label = clean.split(':', 1)[0].strip()
-                missing.append(label)
+                parts = clean.split(':', 1)
+                prefix = parts[0].strip()
+                detail = parts[1].strip() if len(parts) > 1 else ""
+                
+                # If prefix is a category like "Missing Information" or "Cannot Verify",
+                # use the detail part as the actual field name(s)
+                if prefix.lower() in ('missing information', 'cannot verify', 'non-compliant', 'missing', 'wrong'):
+                    if detail:
+                        # Handle comma-separated lists, ignoring commas inside parentheses
+                        items = [item.strip().rstrip('.') for item in re.split(r',\s*(?![^()]*\))', detail)]
+                        for item in items:
+                            # Remove trailing 'due to lack of explicit data' if present
+                            item = re.sub(r'(?i)\s*due to lack of explicit data\s*', '', item).strip()
+                            if item and item.lower() not in ('none', 'n/a', 'nil'):
+                                missing.append(item)
+                else:
+                    missing.append(prefix)
             else:
                 missing.append(clean)
 

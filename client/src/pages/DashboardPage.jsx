@@ -67,16 +67,41 @@ export default function DashboardPage() {
         let inSection = false;
         for (const line of lines) {
             const stripped = line.trim();
-            if (/missing.*(?:wrong|information)/i.test(stripped)) {
+            if (stripped.startsWith("#") && /missing.*(?:wrong|information)/i.test(stripped)) {
                 inSection = true;
                 continue;
             }
             if (inSection && stripped.startsWith("#")) break;
             if (!inSection || !stripped || stripped.startsWith("|") || /^---+$|^===+$|^\*\*\*+$/.test(stripped)) continue;
+            
             let clean = stripped.replace(/^\d+\.\s*|^[-*+]\s*/, "").trim();
+            clean = clean.replace(/\*\*/g, ""); // Strip markdown bold markers
+            
             if (clean && !["none", "n/a", "nil"].includes(clean.toLowerCase())) {
-                if (clean.includes(":")) clean = clean.split(":")[0].trim();
-                missing.push(clean);
+                if (clean.includes(":")) {
+                    const parts = clean.split(":");
+                    const prefix = parts[0].trim();
+                    const detail = parts.slice(1).join(":").trim();
+                    
+                    const lowerPrefix = prefix.toLowerCase();
+                    if (["missing information", "cannot verify", "non-compliant", "missing", "wrong"].includes(lowerPrefix)) {
+                        if (detail) {
+                            // Split by comma but ignore commas inside parentheses
+                            const items = detail.split(/,\s*(?![^()]*\))/);
+                            for (let item of items) {
+                                item = item.trim().replace(/\.$/, "");
+                                item = item.replace(/due to lack of explicit data/i, "").trim();
+                                if (item && !["none", "n/a", "nil"].includes(item.toLowerCase())) {
+                                    missing.push(item);
+                                }
+                            }
+                        }
+                    } else {
+                        missing.push(prefix);
+                    }
+                } else {
+                    missing.push(clean);
+                }
             }
         }
         return missing;
