@@ -1,23 +1,12 @@
 from langchain_huggingface import HuggingFaceEmbeddings
 
-# Initialize once (global / in __init__)
+# BAAI/bge-large-en-v1.5 significantly outperforms all-MiniLM-L6-v2 on technical
+# domain text (MTEB benchmark: ~64 vs ~57). Better recall means the RAG retrieval
+# returns more relevant IS code clauses for each compliance query.
+# NOTE: If you are migrating from all-MiniLM-L6-v2, re-run ingest.py once to
+# rebuild the ChromaDB embeddings with this new model — old embeddings are
+# incompatible with the new vector space.
 embedding_model = HuggingFaceEmbeddings(
-    model_name="sentence-transformers/all-MiniLM-L6-v2",
-    encode_kwargs={'normalize_embeddings': True}
+    model_name="BAAI/bge-large-en-v1.5",
+    encode_kwargs={"normalize_embeddings": True},
 )
-
-def get_embedding(query: str):
-    """Generate embedding vector for a given query string."""
-    try:
-        embedding = embedding_model.embed_query(query)
-        print(
-            f"✅ Successfully generated embedding for query: '{query[:10]}...' "
-            f"using model: '{embedding_model.model_name}'"
-        )
-        return embedding
-    except Exception as e:
-        print(
-            f"❌ Error generating embedding for query: '{query[:10]}...' "
-            f"with model: '{embedding_model.model_name}'"
-        )
-        raise e

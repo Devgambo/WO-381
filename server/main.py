@@ -1,9 +1,6 @@
 import os
-import time
 import re
 import io
-import json
-import shutil
 from typing import Optional
 from pydantic import BaseModel
 
@@ -18,15 +15,6 @@ from PIL import Image
 # Load environment variables
 load_dotenv()
 
-# --- Configuration ---
-REPORTS_DIR = "reports"
-UPLOADS_DIR = "uploads"
-FIRST_EXTRACT_DIR = "first_extract"
-RESULT_DIR = "RESULT"
-os.makedirs(REPORTS_DIR, exist_ok=True)
-os.makedirs(UPLOADS_DIR, exist_ok=True)
-os.makedirs(FIRST_EXTRACT_DIR, exist_ok=True)
-os.makedirs(RESULT_DIR, exist_ok=True)
 
 # --- Lazy-loaded services (heavy imports) ---
 _vectordb = None
@@ -366,30 +354,6 @@ async def root():
     return {"message": "Foundation Compliance Check API", "status": "running"}
 
 
-@app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
-    """Upload a PDF or image file for analysis."""
-    allowed_extensions = {".pdf", ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
-    ext = os.path.splitext(file.filename or "")[1].lower()
-    if ext not in allowed_extensions:
-        raise HTTPException(status_code=400, detail=f"Unsupported file type: {ext}")
-
-    timestamp = int(time.time())
-    safe_name = f"{timestamp}_{file.filename}"
-    file_path = os.path.join(UPLOADS_DIR, safe_name)
-
-    with open(file_path, "wb") as f:
-        content = await file.read()
-        f.write(content)
-
-    file_type = "pdf" if ext == ".pdf" else "image"
-    return {
-        "filename": file.filename,
-        "saved_as": safe_name,
-        "file_type": file_type,
-        "path": file_path,
-    }
-
 
 @app.post("/api/generate-initial-report")
 async def generate_initial_report(
@@ -418,10 +382,7 @@ async def generate_initial_report(
 
         if first_ext == ".pdf":
             pdf_bytes = await files[0].read()
-            tmp_path = os.path.join(UPLOADS_DIR, f"{int(time.time())}_{files[0].filename}")
-            with open(tmp_path, "wb") as f:
-                f.write(pdf_bytes)
-            pil_images = pdf_to_images(tmp_path)
+            pil_images = pdf_to_images(pdf_bytes)
             file_names = [files[0].filename]
         else:
             for upload in files:
@@ -442,13 +403,6 @@ async def generate_initial_report(
         # --- Step 4: Extract missing fields from report ---
         missing_fields = _extract_missing_fields(initial_report)
 
-        # Persist to disk
-        timestamp = int(time.time())
-        report_filename = f"initial_report_{timestamp}.md"
-        report_path = os.path.join(FIRST_EXTRACT_DIR, report_filename)
-        with open(report_path, "w", encoding="utf-8") as f:
-            f.write(initial_report)
-
         # Save to Supabase DB (with drawing_type)
         session_name = ", ".join(file_names)
         supabase = get_supabase_admin_client()
@@ -466,7 +420,6 @@ async def generate_initial_report(
             "drawing_type": drawing_type,
             "missing_fields": missing_fields,
             "file_names": file_names,
-            "saved_report": report_filename,
             "report_id": report_id,
         }
 
@@ -518,13 +471,6 @@ async def generate_final_report(
             user_input=user_input,
         )
 
-        # Persist to disk
-        timestamp = int(time.time())
-        report_filename = f"final_report_{timestamp}.md"
-        report_path = os.path.join(RESULT_DIR, report_filename)
-        with open(report_path, "w", encoding="utf-8") as f:
-            f.write(final_report)
-
         # Update Supabase DB with final report
         if report_id:
             supabase = get_supabase_admin_client()
@@ -534,7 +480,6 @@ async def generate_final_report(
 
         return {
             "report": final_report,
-            "saved_report": report_filename,
             "report_id": report_id,
         }
 
@@ -624,21 +569,17 @@ async def download_pdf(
     markdown_content: str = Form(...),
     filename: str = Form("compliance_report"),
 ):
-    """Convert markdown report to PDF and return as download."""
-    timestamp = int(time.time())
-    pdf_filename = f"{filename}_{timestamp}.pdf"
-    pdf_path = os.path.join(REPORTS_DIR, pdf_filename)
+    """Convert markdown report to PDF and stream as download (no disk write)."""
+    pdf_filename = f"{filename}.pdf"
+    buffer = io.BytesIO()
 
-    success, error_msg = markdown_to_pdf(markdown_content, pdf_path)
+    success, error_msg = markdown_to_pdf(markdown_content, buffer)
     if not success:
         raise HTTPException(status_code=500, detail=error_msg or "PDF conversion failed")
 
-    def iterfile():
-        with open(pdf_path, "rb") as f:
-            yield from f
-
+    buffer.seek(0)
     return StreamingResponse(
-        iterfile(),
+        iter([buffer.read()]),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{pdf_filename}"'},
     )

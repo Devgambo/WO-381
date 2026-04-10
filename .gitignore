@@ -37,6 +37,9 @@ server/uploads/
 server/reports/
 server/first_extract/
 server/RESULT/
+server/chroma_db/
+server/result.json
+server/test_extract.py
 
 # ─── Client ───
 client/node_modules/
