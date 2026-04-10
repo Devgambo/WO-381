@@ -437,6 +437,7 @@ async def generate_final_report(
     user_input: str = Form(...),
     drawing_type: str = Form("foundation"),
     report_id: str = Form(""),
+    assumed_values: str = Form(""),   # JSON string: {field: "value — reason"}
     current_user: dict = Depends(get_current_user),
 ):
     """
@@ -444,6 +445,7 @@ async def generate_final_report(
     Expects the initial_report markdown, user_input text, and drawing_type.
     Requires authentication.
     """
+    import json as _json
     from llm_service import generate_compliance_report
     from prompt import REFINEMENT_PROMPT_TEMPLATE
 
@@ -454,10 +456,28 @@ async def generate_final_report(
         )
 
     try:
+        # Merge any assumed values (from the validator) into the user_input string
+        # so the final report LLM can see them clearly labelled.
+        combined_user_input = user_input
+        if assumed_values.strip():
+            try:
+                assumed_dict = _json.loads(assumed_values)
+                if assumed_dict:
+                    assumed_lines = "\n".join(
+                        f"- {field}: {value} (ASSUMED — use as given)"
+                        for field, value in assumed_dict.items()
+                    )
+                    combined_user_input = (
+                        f"{user_input}\n\n"
+                        f"**Assumed values (treat as provided data):**\n{assumed_lines}"
+                    )
+            except _json.JSONDecodeError:
+                pass  # malformed JSON — ignore and proceed with raw user_input
+
         refinement_prompt = REFINEMENT_PROMPT_TEMPLATE.format(
             drawing_type=drawing_type,
             previous_analysis=initial_report,
-            user_input=user_input,
+            user_input=combined_user_input,
         )
 
         vectordb = get_vectordb()
@@ -468,7 +488,7 @@ async def generate_final_report(
             embedding_model=embedding_model,
             Initial_report=refinement_prompt,
             previous_analysis=initial_report,
-            user_input=user_input,
+            user_input=combined_user_input,
         )
 
         # Update Supabase DB with final report
@@ -618,6 +638,25 @@ async def get_report(report_id: str, current_user: dict = Depends(get_current_us
         if not result.data:
             raise HTTPException(status_code=404, detail="Report not found")
         return {"report": result.data}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/api/reports/{report_id}")
+async def delete_report(report_id: str, current_user: dict = Depends(get_current_user)):
+    """Delete a report by ID. Only the owning user can delete their own reports."""
+    try:
+        supabase = get_supabase_admin_client()
+        result = supabase.table("reports") \
+            .delete() \
+            .eq("id", report_id) \
+            .eq("user_id", current_user["id"]) \
+            .execute()
+        if not result.data:
+            raise HTTPException(status_code=404, detail="Report not found")
+        return {"deleted": True}
     except HTTPException:
         raise
     except Exception as e:

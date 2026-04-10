@@ -218,13 +218,20 @@ export default function DashboardPage() {
         try {
             const result = await validateInput(missingFields, missingAnswers, token);
             if (result.valid) {
-                // Build user input string from the answers
+                // Build user input string from answers, replacing "assume" entries
+                // with the actual assumed value returned by the validator.
+                const assumed = result.assumed_values || {};
                 const inputText = Object.entries(missingAnswers)
                     .filter(([, v]) => v.trim())
-                    .map(([k, v]) => `${k}: ${v}`)
+                    .map(([k, v]) => {
+                        const isAssume = /assume|use standard|use default|use typical|you decide/i.test(v);
+                        return isAssume && assumed[k]
+                            ? `${k}: ${assumed[k]}`
+                            : `${k}: ${v}`;
+                    })
                     .join("\n");
                 setUserInput(inputText);
-                handleGenerateFinal(inputText);
+                handleGenerateFinal(inputText, assumed);
             } else {
                 setValidationErrors(result.invalid_fields || []);
                 setError("Some answers are invalid. Please correct them and try again.");
@@ -236,14 +243,14 @@ export default function DashboardPage() {
         }
     };
 
-    const handleGenerateFinal = async (overrideInput) => {
+    const handleGenerateFinal = async (overrideInput, overrideAssumed = {}) => {
         const input = overrideInput || userInput;
         if (!input.trim())
             return setError("Please provide additional information before generating the final report.");
         setLoading(true);
         setError(null);
         try {
-            const data = await generateFinalReport(initialReport, input, drawingType, reportId, token);
+            const data = await generateFinalReport(initialReport, input, drawingType, reportId, token, overrideAssumed);
             setFinalReport(data.report);
             setStep(4);
         } catch (err) {

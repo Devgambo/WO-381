@@ -50,12 +50,15 @@ export async function generateInitialReport(files, token) {
   return res.json();
 }
 
-export async function generateFinalReport(initialReport, userInput, drawingType, reportId, token) {
+export async function generateFinalReport(initialReport, userInput, drawingType, reportId, token, assumedValues = {}) {
   const formData = new FormData();
   formData.append("initial_report", initialReport);
   formData.append("user_input", userInput);
   formData.append("drawing_type", drawingType || "foundation");
   if (reportId) formData.append("report_id", reportId);
+  if (Object.keys(assumedValues).length > 0) {
+    formData.append("assumed_values", JSON.stringify(assumedValues));
+  }
 
   const res = await fetch(`${API_BASE}/api/generate-final-report`, {
     method: "POST",
@@ -108,6 +111,18 @@ export async function fetchReports(token) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || "Failed to fetch reports");
+  }
+  return res.json();
+}
+
+export async function deleteReport(reportId, token) {
+  const res = await fetch(`${API_BASE}/api/reports/${reportId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || "Failed to delete report");
   }
   return res.json();
 }

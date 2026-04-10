@@ -82,7 +82,7 @@ def run_specialist_agent(images: list, drawing_type: str) -> str:
             "type": "image_url",
             "image_url": {
                 "url": f"data:image/png;base64,{pil_to_base64(img)}",
-                "detail": "high",   # tile-based analysis: reads fine annotations
+                "detail": "high",   # tile-based: reads fine annotations
             },
         }
         for img in images
@@ -92,9 +92,22 @@ def run_specialist_agent(images: list, drawing_type: str) -> str:
         model=VISION_MODEL,
         messages=[
             {
+                # System message: prevents the "I'm unable to analyze images" preamble
+                # that gpt-4o sometimes emits when it hasn't processed image tokens yet.
+                "role": "system",
+                "content": (
+                    "You are a Senior Indian Civil Engineer and RCC drawing compliance expert. "
+                    "Structural drawing images are attached to this message and ARE fully visible to you. "
+                    "You MUST analyze them directly. "
+                    "NEVER say you cannot view or analyze images. "
+                    "Begin your response IMMEDIATELY with '### Step 0: Initial Document Check' — "
+                    "no preamble, no disclaimers, no capability statements."
+                ),
+            },
+            {
                 "role": "user",
                 "content": [{"type": "text", "text": prompt}] + image_content,
-            }
+            },
         ],
         temperature=0,
         max_tokens=4096,

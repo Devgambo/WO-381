@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
-import { fetchReports, downloadPdf } from "../api";
+import { fetchReports, downloadPdf, deleteReport } from "../api";
 import ReportDisplay from "../components/ReportDisplay";
 
 export default function HistoryPage() {
@@ -12,6 +12,7 @@ export default function HistoryPage() {
     const [error, setError] = useState(null);
     const [selectedReport, setSelectedReport] = useState(null);
     const [viewType, setViewType] = useState("initial");
+    const [deletingId, setDeletingId] = useState(null);
 
     useEffect(() => {
         loadReports();
@@ -35,6 +36,19 @@ export default function HistoryPage() {
         if (!content) return;
         const filename = `${type}_report_${report.session_name.replace(/[^a-zA-Z0-9]/g, "_")}`;
         await downloadPdf(content, filename);
+    };
+
+    const handleDelete = async (reportId) => {
+        if (!window.confirm("Delete this report? This cannot be undone.")) return;
+        setDeletingId(reportId);
+        try {
+            await deleteReport(reportId, token);
+            setReports((prev) => prev.filter((r) => r.id !== reportId));
+        } catch (err) {
+            setError(err.message);
+        } finally {
+            setDeletingId(null);
+        }
     };
 
     const handleResume = (report) => {
@@ -204,6 +218,14 @@ export default function HistoryPage() {
                                             ⬇️ Final
                                         </button>
                                     )}
+                                    <button
+                                        onClick={() => handleDelete(report.id)}
+                                        disabled={deletingId === report.id}
+                                        className="px-3 py-1.5 text-xs font-medium text-red-400 border border-red-500/30 rounded-lg bg-transparent hover:bg-red-500/10 transition-all cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                        title="Delete report"
+                                    >
+                                        {deletingId === report.id ? "…" : "🗑️"}
+                                    </button>
                                 </div>
                             </div>
                         </div>

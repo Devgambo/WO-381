@@ -116,11 +116,14 @@ def validate_user_input(missing_fields: list[str], user_answers: dict) -> dict:
         json_match = re.search(r"\{.*\}", raw, re.DOTALL)
         result = json.loads(json_match.group()) if json_match else {}
 
+    assumed = result.get("assumed_values", {})
     print(f"✅ Validator: valid={result.get('valid', True)}, "
-          f"invalid_count={len(result.get('invalid_fields', []))}")
+          f"invalid_count={len(result.get('invalid_fields', []))}, "
+          f"assumed_count={len(assumed)}")
     return {
         "valid": result.get("valid", True),
         "invalid_fields": result.get("invalid_fields", []),
+        "assumed_values": assumed,   # field → "assumed value — reason"
     }
 
 
@@ -173,26 +176,30 @@ def generate_compliance_report(
     # ── 2. Prompts ──────────────────────────────────────────────────────────
     system_prompt = (
         "You are a Senior Indian Civil Engineer specialising in RCC structural design "
-        "and code compliance. Your task is to produce a final, professional compliance "
-        "report by integrating the initial drawing analysis with the user-supplied data "
-        "and the IS code clauses provided below.\n\n"
-        "Rules:\n"
-        "- Cite specific IS 456:2000 clause numbers and SP 34 references for every finding.\n"
-        "- Use clear, professional engineering language.\n"
-        "- Output valid Markdown with a structured compliance table.\n"
-        "- Be decisive: every checklist item must end with a status of "
-        "Compliant / Non-Compliant / Missing Information / Not Applicable.\n"
-        "- Do not ask for more information — work with what is provided."
+        "and code compliance. Produce a final professional compliance report.\n\n"
+        "MANDATORY RULES:\n"
+        "1. Every row in the compliance table MUST include a 'IS Code Reference' column "
+        "with the exact clause (e.g. IS 456:2000 Cl. 26.4.1, SP 34 Fig. 7, IS 13920 Cl. 6.2). "
+        "If no specific clause applies → write 'General Practice'.\n"
+        "2. For any field where the user said 'assume' or where an assumed value was provided, "
+        "mark it as '(Assumed — <value>)' in the Extracted Value column and treat it as Compliant "
+        "unless the assumed value itself is non-compliant.\n"
+        "3. Be decisive: every item must end with Compliant / Non-Compliant / "
+        "Missing Information / Not Applicable.\n"
+        "4. Use professional engineering language. Output valid Markdown.\n"
+        "5. Do not ask for more information — work only with what is provided.\n"
+        "6. At the end, add a '## IS Code References Used' section listing every clause "
+        "cited in the report, grouped by code (IS 456:2000, SP 34, IS 13920, IS 1893, IS 875)."
     )
 
     user_prompt = (
         f"## Previous Analysis\n{previous_analysis}\n\n"
-        f"## User-Supplied Data\n{user_input}\n\n"
-        f"## Relevant IS Code Clauses (retrieved)\n{context_texts}\n\n"
+        f"## User-Supplied / Assumed Data\n{user_input}\n\n"
+        f"## Relevant IS Code Clauses (retrieved from knowledge base)\n{context_texts}\n\n"
         "---\n\n"
         "## Task\n"
-        "1. Integrate the user-supplied data into the previous analysis.\n"
-        "2. Re-evaluate every compliance checklist item with the combined information.\n"
+        "1. Integrate the user-supplied and assumed data into the previous analysis.\n"
+        "2. Re-evaluate every compliance checklist item.\n"
         "3. Cite the exact IS clause number or SP 34 reference for each finding.\n"
         "4. Produce one complete, updated Markdown compliance report.\n"
         "5. In the final 'Missing or Wrong Information' section list only items that "
