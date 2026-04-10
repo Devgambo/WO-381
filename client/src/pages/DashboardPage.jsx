@@ -59,52 +59,129 @@ export default function DashboardPage() {
         }
     }, []);
 
-    // Client-side missing field extractor (mirrors backend logic)
+    // Client-side missing field extractor (mirrors backend dual-extraction logic)
     function extractMissingFieldsClient(report) {
         if (!report) return [];
         const lines = report.split("\n");
-        const missing = [];
-        let inSection = false;
+        const missingFromTable = [];
+        const missingFromStep5 = [];
+        const FLAG_STATUSES = new Set(["missing information", "cannot verify", "non-compliant"]);
+
+        // ── 1. Extract from the compliance table ──────────────────
         for (const line of lines) {
             const stripped = line.trim();
-            if (stripped.startsWith("#") && /missing.*(?:wrong|information)/i.test(stripped)) {
+            if (!stripped.startsWith("|")) continue;
+            let cells = stripped.split("|").map(c => c.trim()).filter(c => c);
+            if (cells.length < 4) continue;
+            const statusCell = cells[cells.length - 1].replace(/\*\*/g, "").trim();
+            if (FLAG_STATUSES.has(statusCell.toLowerCase())) {
+                let criteria = cells[0].replace(/\*\*/g, "").trim();
+                criteria = criteria.replace(/^\d+\.\s*/, "").trim();
+                if (criteria && !["criteria", "none", "n/a", "nil", "---"].includes(criteria.toLowerCase())) {
+                    missingFromTable.push(criteria);
+                }
+            }
+        }
+
+        // ── 2. Extract from Step 5 section ────────────────────────
+        let inSection = false;
+        const categoryKeywords = new Set([
+            "missing information", "cannot verify", "non-compliant",
+            "missing", "wrong", "document type", "not applicable",
+        ]);
+        for (const line of lines) {
+            const stripped = line.trim();
+            if (stripped.startsWith("#") && /(step\s*5|missing.*(?:wrong|information))/i.test(stripped)) {
                 inSection = true;
                 continue;
             }
             if (inSection && stripped.startsWith("#")) break;
             if (!inSection || !stripped || stripped.startsWith("|") || /^---+$|^===+$|^\*\*\*+$/.test(stripped)) continue;
-            
+
             let clean = stripped.replace(/^\d+\.\s*|^[-*+]\s*/, "").trim();
-            clean = clean.replace(/\*\*/g, ""); // Strip markdown bold markers
-            
-            if (clean && !["none", "n/a", "nil"].includes(clean.toLowerCase())) {
-                if (clean.includes(":")) {
-                    const parts = clean.split(":");
-                    const prefix = parts[0].trim();
-                    const detail = parts.slice(1).join(":").trim();
-                    
-                    const lowerPrefix = prefix.toLowerCase();
-                    if (["missing information", "cannot verify", "non-compliant", "missing", "wrong"].includes(lowerPrefix)) {
-                        if (detail) {
-                            // Split by comma but ignore commas inside parentheses
-                            const items = detail.split(/,\s*(?![^()]*\))/);
-                            for (let item of items) {
-                                item = item.trim().replace(/\.$/, "");
-                                item = item.replace(/due to lack of explicit data/i, "").trim();
-                                if (item && !["none", "n/a", "nil"].includes(item.toLowerCase())) {
-                                    missing.push(item);
-                                }
+            clean = clean.replace(/\*\*/g, "");
+            if (!clean || ["none", "n/a", "nil"].includes(clean.toLowerCase())) continue;
+
+            if (clean.includes(":")) {
+                const colonIdx = clean.indexOf(":");
+                const prefix = clean.slice(0, colonIdx).trim();
+                const detail = clean.slice(colonIdx + 1).trim();
+
+                if (categoryKeywords.has(prefix.toLowerCase())) {
+                    if (detail) {
+                        const items = detail.split(/,\s*(?![^()]*\))/);
+                        for (let item of items) {
+                            item = item.trim().replace(/\.$/, "");
+                            item = item.replace(/due to lack of explicit data/i, "").trim();
+                            item = item.replace(/\s*\(.*?\)\s*$/, "").trim();
+                            // Strip "and " prefix from split artifacts
+                            if (item.toLowerCase().startsWith("and ")) {
+                                item = item.slice(4).trim();
+                            }
+                            // Skip non-fillable items about NOTES sections
+                            if (/notes?\s*section|no\s+dedicated/i.test(item)) continue;
+                            if (item && !["none", "n/a", "nil"].includes(item.toLowerCase())) {
+                                missingFromStep5.push(item);
                             }
                         }
-                    } else {
-                        missing.push(prefix);
                     }
                 } else {
-                    missing.push(clean);
+                    if (!/notes?\s*section|no\s+dedicated/i.test(prefix)) {
+                        missingFromStep5.push(prefix);
+                    }
+                }
+            } else {
+                if (!/notes?\s*section|no\s+dedicated/i.test(clean)) {
+                    missingFromStep5.push(clean);
                 }
             }
         }
-        return missing;
+
+        // ── 2b. Check Step 0 for missing site location ────────────
+        const locationAlreadyListed = [...missingFromStep5, ...missingFromTable].some(
+            (item) => item.toLowerCase().includes("location")
+        );
+        if (!locationAlreadyListed) {
+            for (const line of lines) {
+                const stripped = line.trim();
+                if (/0\.2/.test(stripped) && /missing|not\s+(mentioned|found|specified|provided|available)/i.test(stripped)) {
+                    if (/(site\s*)?location/i.test(stripped)) {
+                        missingFromStep5.push("Site Location");
+                        break;
+                    }
+                }
+            }
+        }
+
+        // ── 3. Merge & deduplicate ────────────────────────────────
+        const normalise = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+        const seen = new Set();
+        const merged = [];
+
+        for (const item of missingFromStep5) {
+            const key = normalise(item);
+            if (key && !seen.has(key)) {
+                seen.add(key);
+                merged.push(item);
+            }
+        }
+        for (const item of missingFromTable) {
+            const key = normalise(item);
+            if (key && !seen.has(key)) {
+                let alreadyCovered = false;
+                for (const existingKey of seen) {
+                    if (key.includes(existingKey) || existingKey.includes(key)) {
+                        alreadyCovered = true;
+                        break;
+                    }
+                }
+                if (!alreadyCovered) {
+                    seen.add(key);
+                    merged.push(item);
+                }
+            }
+        }
+        return merged;
     }
 
     const handleGenerateInitial = async () => {

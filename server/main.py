@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from auth import router as auth_router, get_current_user
-from database import get_supabase_client
+from database import get_supabase_admin_client
 from PIL import Image
 
 # Load environment variables
@@ -222,55 +222,143 @@ def markdown_to_pdf(markdown_text: str, output_path: str):
 
 #--------- missing field extractor----------
 def _extract_missing_fields(report: str) -> list[str]:
-    """Parse the 'Missing or Wrong Information' section from an initial report."""
-    missing = []
+    """Extract missing/non-compliant fields from both the compliance table AND Step 5.
+    
+    Uses a dual-extraction approach:
+      1. Scan the compliance table (Step 2 & 3) for rows whose Status column
+         contains 'Missing Information', 'Cannot Verify', or 'Non-Compliant'.
+      2. Parse the 'Step 5: Report Missing or Wrong Information' section.
+      3. Merge both sets, deduplicating by normalised name.
+    """
+    missing_from_table = []
+    missing_from_step5 = []
+
+    # ── 1. Extract from the compliance table ──────────────────────
+    FLAG_STATUSES = {'missing information', 'cannot verify', 'non-compliant'}
+    for line in report.splitlines():
+        stripped = line.strip()
+        # Table rows look like: | **1. Grade of Concrete** | ... | ... | Missing Information |
+        if not stripped.startswith('|'):
+            continue
+        cells = [c.strip() for c in stripped.split('|')]
+        # split('|') gives ['', cell1, cell2, ..., ''] for a well-formed row
+        cells = [c for c in cells if c]  # remove empties
+        if len(cells) < 4:
+            continue
+        # Skip the header / separator rows
+        status_cell = cells[-1].strip().replace('**', '').strip()
+        if status_cell.lower() in FLAG_STATUSES:
+            # The criteria name is in the first cell
+            criteria = cells[0].strip().replace('**', '').strip()
+            # Strip leading number like "1. " or "12. "
+            criteria = re.sub(r'^\d+\.\s*', '', criteria).strip()
+            if criteria and criteria.lower() not in ('criteria', 'none', 'n/a', 'nil', '---'):
+                missing_from_table.append(criteria)
+
+    # ── 2. Extract from Step 5 section ────────────────────────────
     in_section = False
     for line in report.splitlines():
         stripped = line.strip()
-        # Detect the section header
-        if stripped.startswith("#") and re.search(r'missing.*(?:wrong|information)', stripped, re.IGNORECASE):
+        # Detect the section header (Step 5: Report Missing or Wrong Information)
+        if stripped.startswith('#') and re.search(r'(step\s*5|missing.*(?:wrong|information))', stripped, re.IGNORECASE):
             in_section = True
             continue
-        # Stop at next heading
-        if in_section and stripped.startswith("#"):
+        # Stop at next heading or Summary section
+        if in_section and stripped.startswith('#'):
             break
         if not in_section:
             continue
-        # Skip empty lines, table rows, and separator lines
-        if not stripped:
-            continue
-        if stripped.startswith("|"):
-            continue
-        if re.match(r'^---+$|^===+$|^\*\*\*+$', stripped):
+        # Skip empty, table, and separator lines
+        if not stripped or stripped.startswith('|') or re.match(r'^---+$|^===+$|^\*\*\*+$', stripped):
             continue
         # Remove list markers (1., 2., -, *)
         clean = re.sub(r'^\d+\.\s*|^[-*+]\s*', '', stripped).strip()
         # Strip markdown bold markers
         clean = clean.replace('**', '')
-        if clean and clean.lower() not in ('none', 'n/a', 'nil'):
-            if ':' in clean:
-                parts = clean.split(':', 1)
-                prefix = parts[0].strip()
-                detail = parts[1].strip() if len(parts) > 1 else ""
-                
-                # If prefix is a category like "Missing Information" or "Cannot Verify",
-                # use the detail part as the actual field name(s)
-                if prefix.lower() in ('missing information', 'cannot verify', 'non-compliant', 'missing', 'wrong'):
-                    if detail:
-                        # Handle comma-separated lists, ignoring commas inside parentheses
-                        items = [item.strip().rstrip('.') for item in re.split(r',\s*(?![^()]*\))', detail)]
-                        for item in items:
-                            # Remove trailing 'due to lack of explicit data' if present
-                            item = re.sub(r'(?i)\s*due to lack of explicit data\s*', '', item).strip()
-                            if item and item.lower() not in ('none', 'n/a', 'nil'):
-                                missing.append(item)
-                else:
-                    missing.append(prefix)
-            else:
-                missing.append(clean)
+        if not clean or clean.lower() in ('none', 'n/a', 'nil'):
+            continue
 
-    print("\n\nmissing data", missing)
-    return missing
+        if ':' in clean:
+            parts = clean.split(':', 1)
+            prefix = parts[0].strip()
+            detail = parts[1].strip() if len(parts) > 1 else ''
+
+            category_keywords = (
+                'missing information', 'cannot verify', 'non-compliant',
+                'missing', 'wrong', 'document type', 'not applicable',
+            )
+            if prefix.lower() in category_keywords:
+                if detail:
+                    # Handle comma-separated lists, ignoring commas inside parentheses
+                    items = [item.strip().rstrip('.') for item in re.split(r',\s*(?![^()]*\))', detail)]
+                    for item in items:
+                        item = re.sub(r'(?i)\s*due to lack of explicit data\s*', '', item).strip()
+                        # Remove parenthetical suffixes (e.g., "(M20 assumed for design, ...)") 
+                        item = re.sub(r'\s*\(.*?\)\s*$', '', item).strip()
+                        # Skip artifacts from splitting (e.g., "and specific ...")
+                        if item.lower().startswith('and '):
+                            item = item[4:].strip()
+                        # Skip non-fillable items like "No dedicated NOTES section ..."
+                        if re.search(r'(?i)notes?\s*section|no\s+dedicated', item):
+                            continue
+                        if item and item.lower() not in ('none', 'n/a', 'nil'):
+                            missing_from_step5.append(item)
+            else:
+                # The prefix itself is the field name (e.g., "Clear Cover: Missing")
+                # Skip non-fillable items
+                if not re.search(r'(?i)notes?\s*section|no\s+dedicated', prefix):
+                    missing_from_step5.append(prefix)
+        else:
+            # Skip non-fillable items
+            if not re.search(r'(?i)notes?\s*section|no\s+dedicated', clean):
+                missing_from_step5.append(clean)
+
+    # ── 2b. Check Step 0 for missing site location ──────────────
+    location_already_listed = any(
+        'location' in item.lower() for item in missing_from_step5 + missing_from_table
+    )
+    if not location_already_listed:
+        for line in report.splitlines():
+            stripped = line.strip()
+            # Look for Step 0.2 lines that flag location as missing
+            if re.search(r'0\.2', stripped) and re.search(r'(?i)missing|not\s+(mentioned|found|specified|provided|available)', stripped):
+                if re.search(r'(?i)(site\s*)?location', stripped):
+                    missing_from_step5.append('Site Location')
+                    break
+
+    # ── 3. Merge & deduplicate ────────────────────────────────────
+    seen = set()
+    merged = []
+
+    def _normalise(s: str) -> str:
+        """Lowercase, strip punctuation/spaces for dedup comparison."""
+        return re.sub(r'[^a-z0-9]', '', s.lower())
+
+    # Step 5 items first (they tend to have better descriptions)
+    for item in missing_from_step5:
+        key = _normalise(item)
+        if key and key not in seen:
+            seen.add(key)
+            merged.append(item)
+
+    # Then table items (fill in anything Step 5 missed)
+    for item in missing_from_table:
+        key = _normalise(item)
+        if key and key not in seen:
+            # Also check if any existing key contains this one or vice versa
+            already_covered = False
+            for existing_key in seen:
+                if key in existing_key or existing_key in key:
+                    already_covered = True
+                    break
+            if not already_covered:
+                seen.add(key)
+                merged.append(item)
+
+    print("\n\n[Missing Fields] from table:", missing_from_table)
+    print("[Missing Fields] from step5:", missing_from_step5)
+    print("[Missing Fields] merged:", merged)
+    return merged
 
 # -------- Routes -------- 
 @app.get("/")
@@ -363,7 +451,7 @@ async def generate_initial_report(
 
         # Save to Supabase DB (with drawing_type)
         session_name = ", ".join(file_names)
-        supabase = get_supabase_client()
+        supabase = get_supabase_admin_client()
         db_result = supabase.table("reports").insert({
             "user_id": current_user["id"],
             "session_name": session_name,
@@ -439,7 +527,7 @@ async def generate_final_report(
 
         # Update Supabase DB with final report
         if report_id:
-            supabase = get_supabase_client()
+            supabase = get_supabase_admin_client()
             supabase.table("reports").update({
                 "final_report": final_report,
             }).eq("id", report_id).eq("user_id", current_user["id"]).execute()
@@ -564,7 +652,7 @@ async def download_pdf(
 async def list_reports(current_user: dict = Depends(get_current_user)):
     """Get all reports for the authenticated user, newest first."""
     try:
-        supabase = get_supabase_client()
+        supabase = get_supabase_admin_client()
         result = supabase.table("reports") \
             .select("id, session_name, drawing_type, initial_report, final_report, created_at") \
             .eq("user_id", current_user["id"]) \
@@ -579,7 +667,7 @@ async def list_reports(current_user: dict = Depends(get_current_user)):
 async def get_report(report_id: str, current_user: dict = Depends(get_current_user)):
     """Get a single report by ID."""
     try:
-        supabase = get_supabase_client()
+        supabase = get_supabase_admin_client()
         result = supabase.table("reports") \
             .select("*") \
             .eq("id", report_id) \

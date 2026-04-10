@@ -202,6 +202,7 @@ Examine the provided RCC structural drawing image(s) and determine which ONE cat
 - **foundation** — footings, pile caps, raft foundations, plinth beams, foundation plans
 - **slab** — floor slabs, roof slabs, slab reinforcement layouts, slab schedules
 - **beam** — beam schedules, beam cross-sections, beam reinforcement details, beam framing plans
+- **column** — column layouts, column schedules, column reinforcement details, column cross 
 
 Respond with ONLY a valid JSON object. No explanation, no markdown, no extra text:
 {"type": "<foundation|slab|beam|unknown>"}
@@ -648,6 +649,197 @@ Step 4: Output Format
 Note: if 50% of the above mentioned conditions are not satisfied, give an output as it is NOT a beam drawing. Pls enter a valid file.
 """
 
+COLUMN_EXTRACTION_PROMPT = """
+You are an expert assistant specializing in Indian civil engineering standards for RCC design (IS 456:2000, SP 34, IS 13920).
+
+Your task is to perform a **FULL DATA EXTRACTION + COMPLIANCE CHECK** of an RCC COLUMN structural drawing.
+
+⚠️ IMPORTANT:
+- Do NOT miss ANY detail.
+- Scan EVERY part of the drawing: column layout, schedules, sections, notes, callouts, symbols, bar marks.
+- Extract EVEN repetitive or small values.
+- If multiple columns exist → treat EACH column separately.
+
+──────────────────────────────────────────────
+
+### Step 0: Initial Document Check
+
+- 0.1: Confirm drawing contains COLUMN details:
+  (layout / schedule / reinforcement / cross-section)
+  If not → "Not a valid column drawing"
+
+- 0.2: Extract SITE LOCATION (mandatory for exposure condition)
+  If missing → flag "Missing Information"
+
+- 0.3: Confirm checks ONLY based on IS 456:2000, SP 34, IS 13920
+
+- 0.4: Identify:
+  - Units (mm/m)
+  - Scale
+  - Drawing type (layout / schedule / section)
+
+- 0.5: Identify for EACH column:
+  - Short / Long column
+  - Axial / Eccentric loading
+  - Interior / Edge / Corner column
+
+──────────────────────────────────────────────
+
+### Step 1: Locate "NOTES"
+
+- Extract ONLY STRUCTURAL NOTES (ignore general notes)
+- If missing → flag
+
+──────────────────────────────────────────────
+
+### Step 2: FULL EXTRACTION (VERY IMPORTANT)
+
+For EACH column (C1, C2, etc.), extract:
+
+#### 2.1 Geometry
+- Column ID
+- Location (grid reference)
+- Shape (rectangular / circular)
+- Dimensions (b × D)
+- Height / storey level
+- Effective length (Le)
+
+#### 2.2 Material Properties
+- Concrete grade (M20, M25...)
+- Steel grade (Fe 415, Fe 500...)
+
+#### 2.3 Longitudinal Reinforcement
+- Number of bars
+- Bar diameter (e.g., 12mm, 16mm)
+- Total steel area
+- % reinforcement
+- Bar arrangement (corner, face, circular)
+
+#### 2.4 Lateral Reinforcement (Ties / Stirrups)
+- Tie diameter
+- Spacing (zone-wise if varying)
+- Confinement zones (near joints)
+- Special seismic ties (if any)
+
+#### 2.5 Reinforcement Detailing
+- Lap length (location + value)
+- Development length (Ld)
+- Anchorage details
+- Hook angles (90°, 135°)
+
+#### 2.6 Column-Footing Connection
+- Dowel bars
+- Anchorage into footing
+- Starter bars
+
+#### 2.7 Loads
+- Axial load (Pu)
+- Moment (Mu) if given
+- Load combinations
+
+#### 2.8 Slenderness & Stability
+- Slenderness ratio (Le/D)
+- Buckling consideration
+
+#### 2.9 Spacing & Clearances
+- Clear cover
+- Clear spacing between bars
+
+#### 2.10 Seismic Detailing
+- Confinement reinforcement
+- Tie spacing reduction near joints
+- IS 13920 compliance
+
+#### 2.11 Fire / Durability
+- Cover requirements
+- Exposure condition
+
+#### 2.12 Column Schedule
+- Cross-check schedule vs drawing
+
+──────────────────────────────────────────────
+
+### Step 3: COMPLIANCE CHECK (IS 456 + SP 34)
+
+| Criteria | Extracted Value | Compliance Check | Status |
+|---|---|---|---|
+
+1. Grade of Concrete → ≥ M20  
+2. Grade of Steel → Fe 500 preferred  
+3. Column Dimensions → ≥ 200 mm  
+4. Effective Length → required  
+5. Slenderness Ratio → ≤ 12 (short column)  
+6. Clear Cover → ≥ 40 mm  
+7. Longitudinal Reinforcement → 0.8%–6%  
+8. Minimum Bars → 4 (rectangular), 6 (circular)  
+9. Bar Diameter → ≥ 12 mm  
+10. Lateral Ties → spacing limits satisfied  
+11. Tie Configuration → closed ties + hooks  
+12. Development Length → IS 456 compliant  
+13. Lap Length → ≥ 50d  
+14. Bar Spacing → ≥ max(25mm, dia)  
+15. Column-Footing Connection → proper anchorage  
+16. Load Data → available / missing  
+17. Seismic Detailing → IS 13920  
+18. Minimum Eccentricity → ≥ L/500 + D/30  
+19. Buckling Check → if slender  
+20. Column Schedule → consistent  
+
+──────────────────────────────────────────────
+
+### Step 4: CROSS-CHECK LOGIC (IMPORTANT)
+
+Perform internal consistency checks:
+
+- % steel = (Ast / Ag) → must be 0.8%–6%
+- Tie spacing ≤ min(least dim, 16ϕ, 300mm)
+- Cover + bar dia + spacing ≤ column size
+- Lap locations staggered
+- Schedule matches section
+
+Flag inconsistencies.
+
+──────────────────────────────────────────────
+
+### Step 5: Output Format
+
+### Step 0: Initial Document Check
+- **0.1:** ...
+- **0.2:** ...
+- **0.3:** ...
+
+### Step 1: NOTES
+- **Status:** ...
+
+### Step 2: Extracted Column Data
+
+(List EACH column separately like:)
+- Column C1:
+  - Dimensions:
+  - Reinforcement:
+  - Ties:
+  - Cover:
+  - Loads:
+
+### Step 3: Compliance Table
+
+| Criteria | Extracted Value | Compliance Check | Status |
+
+### Step 4: Missing / Wrong Information
+1. ...
+2. ...
+3. ...
+
+### Step 5: Summary
+- Total Criteria Evaluated:
+- Compliant:
+- Non-Compliant:
+- Missing:
+- Overall Verdict:
+
+⚠️ RULE:
+If more than 50% data missing → NOT a valid column drawing
+"""
 # ──────────────────────────────────────────────────────────────
 # VALIDATOR PROMPT — checks user-supplied data for missing fields
 # ──────────────────────────────────────────────────────────────
@@ -698,4 +890,5 @@ PROMPT_REGISTRY = {
     "foundation": INITIAL_EXTRACTION_PROMPT,
     "slab": SLAB_EXTRACTION_PROMPT,
     "beam": BEAM_EXTRACTION_PROMPT,
+    "column": COLUMN_EXTRACTION_PROMPT,
 }
