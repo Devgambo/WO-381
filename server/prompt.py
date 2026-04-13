@@ -153,6 +153,43 @@ at footing base (SP 34).
 
 ---
 
+### Step 3A: Practical Engineering & Constructability Checks
+Evaluate real-world engineering soundness beyond code clauses. Flag issues even if not explicitly in notes.
+
+- **P1. Overlapping Structural Elements**
+  - Check if footings / beams / columns overlap or clash in plan.
+  - Status: Non-Compliant if any overlap exists.
+
+- **P2. Uniform Member Sizes (Unrealistic Design)**
+  - Check if all beams / slabs / plinth beams use identical size and reinforcement.
+  - Status: Non-Compliant if no variation across spans/loading conditions.
+
+- **P3. Missing Design Basis Inputs**
+  - Check presence of SBC, number of floors, loading assumptions.
+  - Status: Missing Information if absent.
+
+- **P4. Suitability of Foundation Type**
+  - Verify if a single footing type is used everywhere without justification.
+  - Status: Non-Compliant if inappropriate for structure type.
+
+- **P5. Plan vs Schedule Consistency**
+  - Cross-check dimensions, labels, and reinforcement between plan and schedules.
+  - Status: Non-Compliant if mismatch.
+
+- **P6. Reinforcement Rationality**
+  - Check if reinforcement changes logically with span, load, and location.
+  - Status: Non-Compliant if arbitrary or constant.
+
+- **P7. Missing Critical Notes**
+  - Check if essential construction/design notes are absent.
+  - Status: Missing Information if insufficient notes.
+
+- **P8. Constructability Issues**
+  - Check congestion, impractical spacing, unclear detailing.
+  - Status: Cannot Verify / Non-Compliant.
+
+---
+
 ### Step 4: Output — Copy and fill this EXACT skeleton
 
 ### Step 0: Initial Document Check
@@ -794,7 +831,6 @@ Respond with ONLY a valid JSON object — no text outside JSON:
 {answers_json}
 """
 
-
 # ─────────────────────────────────────────────────────────────────────────────
 # REFINEMENT PROMPT — injected into the final report generation call
 # ─────────────────────────────────────────────────────────────────────────────
@@ -805,17 +841,93 @@ Re-evaluate the compliance checklist using the information below.
 For any field where the user said "assume" or provided an assumed value, \
 use that value directly and note it clearly in the report as "(Assumed)".
 
-Previous Analysis:
+---
+
+### FINAL REPORT FORMAT (MANDATORY)
+Generate a **professional Structural Compliance Report** with the following sections:
+
+1. **Project Overview**
+   - Project Title
+   - Client Name
+   - Project Location
+   - Prepared By
+   - Date
+   - Revision Number
+
+2. **Scope of Work**
+   - Type of structure (Residential/Commercial/Industrial)
+   - Structural elements considered (Foundation/Beam/Slab/Column)
+   - Task type (Design/Review/Compliance Check)
+
+3. **Input Data and Assumptions**
+   - Concrete Grade
+   - Steel Grade
+   - Loads: Dead, Live, Wind, Seismic
+   - SBC of Soil
+   - Assumptions: cover, load combinations, boundary conditions
+
+4. **Applicable Codes and Standards**
+   - IS 456:2000
+   - IS 875
+   - IS 1893
+   - SP 34
+
+5. **Compliance Check Table**
+   - Exhaustive table of parameters vs IS code requirements
+   - Include Status: OK / Not OK / Missing / Cannot Verify
+
+6. **Detailing Compliance Check**
+   - Development Length
+   - Anchorage Length
+   - Lap Length
+   - Bar Spacing
+   - Clear Cover
+
+7. **Practical Issues in Drawing**
+   - Overlapping elements
+   - Uniform/unrealistic member sizes
+   - Missing SBC / floors
+   - Constructability issues
+   - Reinforcement congestion
+
+8. **Safety and Serviceability Checks**
+   - Deflection
+   - Crack control
+   - Stability
+   - Factor of safety
+
+9. **Results and Observations**
+   - Safe / Unsafe / Overdesigned
+   - Key issues summary
+
+10. **Recommendations**
+   - Design corrections
+   - Reinforcement changes
+   - Optimization suggestions
+
+11. **Final Conclusion**
+   - Overall compliance verdict
+
+12. **Error Classification**
+   - Classify issues as: Critical / Moderate / Minor
+
+13. **Appendix (if applicable)**
+   - Code clauses
+   - Extracted values
+
+---
+
+## Previous Analysis
 {previous_analysis}
 
-User-Supplied / Assumed Values:
+## User-Supplied / Assumed Values
 {user_input}
 """
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Prompt registry — maps drawing type → extraction prompt
 # ─────────────────────────────────────────────────────────────────────────────
+
 PROMPT_REGISTRY = {
     "foundation": INITIAL_EXTRACTION_PROMPT,
     "slab":       SLAB_EXTRACTION_PROMPT,

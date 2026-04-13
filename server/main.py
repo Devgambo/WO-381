@@ -487,8 +487,6 @@ async def generate_final_report(
             vectordb=vectordb,
             embedding_model=embedding_model,
             Initial_report=refinement_prompt,
-            previous_analysis=initial_report,
-            user_input=combined_user_input,
         )
 
         # Update Supabase DB with final report

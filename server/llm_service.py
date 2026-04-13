@@ -131,24 +131,22 @@ def generate_compliance_report(
     Initial_report: str,
     vectordb,
     embedding_model,
-    previous_analysis: str,
-    user_input: str,
     k: int = 15,
 ) -> str:
     """Generate the final compliance report using RAG + o4-mini reasoning.
 
     Steps:
-    1. Retrieve the top-k most relevant IS code chunks from ChromaDB.
-    2. Build a prompt combining initial report, user input, and retrieved context.
+    1. Embed Initial_report to retrieve the top-k most relevant IS code chunks from ChromaDB.
+    2. Append retrieved context to the already-formatted refinement prompt.
     3. Call o4-mini (reasoning model) for multi-step clause-matching compliance.
 
     Args:
-        Initial_report:     Refinement prompt string (pre-formatted by main.py).
-        vectordb:           VectorStore instance.
-        embedding_model:    HuggingFace embedding model.
-        previous_analysis:  Initial extraction report markdown.
-        user_input:         User-supplied values for missing fields.
-        k:                  Number of IS code chunks to retrieve (default 10).
+        Initial_report:  Complete refinement prompt (pre-formatted by main.py via
+                         REFINEMENT_PROMPT_TEMPLATE — contains drawing type, previous
+                         analysis, and user-supplied/assumed values).
+        vectordb:        VectorStore instance.
+        embedding_model: HuggingFace embedding model.
+        k:               Number of IS code chunks to retrieve (default 15).
 
     Returns:
         Final compliance report as a Markdown string.
@@ -176,37 +174,27 @@ def generate_compliance_report(
     # ── 2. Prompts ──────────────────────────────────────────────────────────
     system_prompt = (
         "You are a Senior Indian Civil Engineer specialising in RCC structural design "
-        "and code compliance. Produce a final professional compliance report.\n\n"
+        "and IS code compliance. Produce a final professional compliance report.\n\n"
         "MANDATORY RULES:\n"
-        "1. Every row in the compliance table MUST include a 'IS Code Reference' column "
+        "1. Every row in the compliance table MUST include an 'IS Code Reference' column "
         "with the exact clause (e.g. IS 456:2000 Cl. 26.4.1, SP 34 Fig. 7, IS 13920 Cl. 6.2). "
         "If no specific clause applies → write 'General Practice'.\n"
-        "2. For any field where the user said 'assume' or where an assumed value was provided, "
-        "mark it as '(Assumed — <value>)' in the Extracted Value column and treat it as Compliant "
-        "unless the assumed value itself is non-compliant.\n"
-        "3. Be decisive: every item must end with Compliant / Non-Compliant / "
-        "Missing Information / Not Applicable.\n"
-        "4. Use professional engineering language. Output valid Markdown.\n"
-        "5. Do not ask for more information — work only with what is provided.\n"
-        "6. At the end, add a '## IS Code References Used' section listing every clause "
-        "cited in the report, grouped by code (IS 456:2000, SP 34, IS 13920, IS 1893, IS 875)."
+        "2. Mark any assumed value as '(Assumed — <value>)' in the Extracted Value column; "
+        "treat it as Compliant unless the assumed value itself is non-compliant.\n"
+        "3. Be decisive: every checklist item must end with exactly one of — "
+        "Compliant / Non-Compliant / Missing Information / Cannot Verify / Not Applicable.\n"
+        "4. Output valid Markdown. Do not ask for more information.\n"
+        "5. Close the report with a '## IS Code References Used' section listing every "
+        "clause cited, grouped by code (IS 456:2000, SP 34, IS 13920, IS 1893, IS 875)."
     )
 
+    # Initial_report is the fully-formatted REFINEMENT_PROMPT_TEMPLATE string which
+    # already embeds: drawing type, FINAL REPORT FORMAT, previous analysis, and
+    # user-supplied/assumed values.  We only need to append the RAG context.
     user_prompt = (
-        f"## Previous Analysis\n{previous_analysis}\n\n"
-        f"## User-Supplied / Assumed Data\n{user_input}\n\n"
-        f"## Relevant IS Code Clauses (retrieved from knowledge base)\n{context_texts}\n\n"
+        f"{Initial_report}\n\n"
         "---\n\n"
-        "## Task\n"
-        "1. Integrate the user-supplied and assumed data into the previous analysis.\n"
-        "2. Re-evaluate every compliance checklist item.\n"
-        "3. Cite the exact IS clause number or SP 34 reference for each finding.\n"
-        "4. Produce one complete, updated Markdown compliance report.\n"
-        "5. In the final 'Missing or Wrong Information' section list only items that "
-        "are *still* unresolved after incorporating the user input. "
-        "If everything is resolved, state: "
-        "'All previously identified issues have been resolved.'\n\n"
-        f"## Refinement Directive\n{Initial_report}"
+        f"## Retrieved IS Code Context (from knowledge base)\n{context_texts}"
     )
 
     # ── 3. Call o4-mini (reasoning model) ───────────────────────────────────
