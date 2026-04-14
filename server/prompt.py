@@ -839,7 +839,7 @@ Drawing Type: {drawing_type}
 
 Re-evaluate the compliance checklist using the information below.
 For any field where the user said "assume" or provided an assumed value, \
-use that value directly and note it clearly in the report as "(Assumed)".
+use that value directly or assume a standard value.
 
 ---
 
@@ -908,10 +908,7 @@ Generate a **professional Structural Compliance Report** with the following sect
 11. **Final Conclusion**
    - Overall compliance verdict
 
-12. **Error Classification**
-   - Classify issues as: Critical / Moderate / Minor
-
-13. **Appendix (if applicable)**
+12. **Appendix (if applicable)**
    - Code clauses
    - Extracted values
 

@@ -13,11 +13,10 @@ if not _api_key:
 client = OpenAI(api_key=_api_key)
 
 # ── Model routing ────────────────────────────────────────────────────────────
-# gpt-4o-mini  — fast cheap model for classification and validation (text only,
-#                no complex reasoning needed).
+# gpt-4o-mini  — fast cheap model for classification and validation (text only).
 # o4-mini      — reasoning model for final report generation. Compliance checking
-#                is a multi-step rule-matching task across IS clauses; reasoning
-#                models handle this significantly better than standard LLMs.
+#                is a multi-step rule-matching task; reasoning models handle this
+#                significantly better than standard LLMs.
 ORCHESTRATOR_MODEL = "gpt-4o-mini"
 VALIDATOR_MODEL    = "gpt-4o-mini"
 FINAL_REPORT_MODEL = "o4-mini"
@@ -80,7 +79,7 @@ def classify_drawing_type(base64_images: list[str]) -> str:
 def validate_user_input(missing_fields: list[str], user_answers: dict) -> dict:
     """Validate user-supplied answers for missing data fields.
 
-    Returns {"valid": bool, "invalid_fields": list}.
+    Returns {"valid": bool, "invalid_fields": list, "assumed_values": dict}.
     """
     from prompt import VALIDATOR_PROMPT
 
@@ -105,7 +104,7 @@ def validate_user_input(missing_fields: list[str], user_answers: dict) -> dict:
         )
     except Exception as e:
         print(f"❌ Validator error: {e} — treating input as valid.")
-        return {"valid": True, "invalid_fields": []}
+        return {"valid": True, "invalid_fields": [], "assumed_values": {}}
 
     raw = response.choices[0].message.content.strip()
     print(f"🔍 Validator raw response: {raw}")
@@ -128,7 +127,9 @@ def validate_user_input(missing_fields: list[str], user_answers: dict) -> dict:
 
 
 def generate_compliance_report(
-    Initial_report: str,
+    previous_analysis: str,
+    user_input: str,
+    drawing_type: str,
     vectordb,
     embedding_model,
     k: int = 15,
@@ -136,25 +137,34 @@ def generate_compliance_report(
     """Generate the final compliance report using RAG + o4-mini reasoning.
 
     Steps:
-    1. Embed Initial_report to retrieve the top-k most relevant IS code chunks from ChromaDB.
-    2. Append retrieved context to the already-formatted refinement prompt.
-    3. Call o4-mini (reasoning model) for multi-step clause-matching compliance.
+    1. Format REFINEMENT_PROMPT_TEMPLATE with the supplied inputs.
+    2. Embed the formatted prompt to retrieve top-k IS code chunks from ChromaDB.
+    3. Append retrieved context and call o4-mini for multi-step compliance checking.
 
     Args:
-        Initial_report:  Complete refinement prompt (pre-formatted by main.py via
-                         REFINEMENT_PROMPT_TEMPLATE — contains drawing type, previous
-                         analysis, and user-supplied/assumed values).
-        vectordb:        VectorStore instance.
-        embedding_model: HuggingFace embedding model.
-        k:               Number of IS code chunks to retrieve (default 15).
+        previous_analysis: Initial extraction report markdown (from specialist agent).
+        user_input:        User-supplied / assumed values for missing fields.
+        drawing_type:      One of "foundation", "slab", "beam", "column".
+        vectordb:          VectorStore instance.
+        embedding_model:   HuggingFace embedding model.
+        k:                 Number of IS code chunks to retrieve (default 15).
 
     Returns:
         Final compliance report as a Markdown string.
     """
-    # ── 1. RAG retrieval ────────────────────────────────────────────────────
+    from prompt import REFINEMENT_PROMPT_TEMPLATE
+
+    # ── 1. Build refinement prompt from template ─────────────────────────────
+    refinement_prompt = REFINEMENT_PROMPT_TEMPLATE.format(
+        drawing_type=drawing_type,
+        previous_analysis=previous_analysis,
+        user_input=user_input,
+    )
+
+    # ── 2. RAG retrieval ────────────────────────────────────────────────────
     print("📚 Embedding query and retrieving IS code context...")
     try:
-        query_embedding = embedding_model.embed_query(Initial_report)
+        query_embedding = embedding_model.embed_query(refinement_prompt)
         retrieved = vectordb.query([query_embedding], n_results=k)
         if retrieved:
             context_texts = "\n\n".join(
@@ -171,7 +181,6 @@ def generate_compliance_report(
         print(f"⚠ RAG retrieval failed: {e} — proceeding without context.")
         context_texts = "IS code context unavailable."
 
-    # ── 2. Prompts ──────────────────────────────────────────────────────────
     system_prompt = (
         "You are a Senior Indian Civil Engineer specialising in RCC structural design "
         "and IS code compliance. Produce a final professional compliance report.\n\n"
@@ -179,25 +188,25 @@ def generate_compliance_report(
         "1. Every row in the compliance table MUST include an 'IS Code Reference' column "
         "with the exact clause (e.g. IS 456:2000 Cl. 26.4.1, SP 34 Fig. 7, IS 13920 Cl. 6.2). "
         "If no specific clause applies → write 'General Practice'.\n"
-        "2. Mark any assumed value as '(Assumed — <value>)' in the Extracted Value column; "
         "treat it as Compliant unless the assumed value itself is non-compliant.\n"
-        "3. Be decisive: every checklist item must end with exactly one of — "
+        "2. Be decisive: every checklist item must end with exactly one of — "
         "Compliant / Non-Compliant / Missing Information / Cannot Verify / Not Applicable.\n"
-        "4. Output valid Markdown. Do not ask for more information.\n"
-        "5. Close the report with a '## IS Code References Used' section listing every "
+        "3. Output valid Markdown. Do not ask for more information.\n"
+        "4. Close the report with a '## IS Code References Used' section listing every "
         "clause cited, grouped by code (IS 456:2000, SP 34, IS 13920, IS 1893, IS 875)."
+
+        "ADDITIONAL RULES:\n"
+        "1. Apart from the given information in initial report and user input do not assume anything else. "
+        "2. "
     )
 
-    # Initial_report is the fully-formatted REFINEMENT_PROMPT_TEMPLATE string which
-    # already embeds: drawing type, FINAL REPORT FORMAT, previous analysis, and
-    # user-supplied/assumed values.  We only need to append the RAG context.
     user_prompt = (
-        f"{Initial_report}\n\n"
+        f"{refinement_prompt}\n\n"
         "---\n\n"
         f"## Retrieved IS Code Context (from knowledge base)\n{context_texts}"
     )
 
-    # ── 3. Call o4-mini (reasoning model) ───────────────────────────────────
+    # ── 4. Call o4-mini (reasoning model) ───────────────────────────────────
     # o4-mini does not accept a temperature parameter (uses internal reasoning).
     # Use max_completion_tokens (covers both output + reasoning tokens).
     print(f"🤖 Calling {FINAL_REPORT_MODEL} for final report generation...")

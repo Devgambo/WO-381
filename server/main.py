@@ -447,7 +447,6 @@ async def generate_final_report(
     """
     import json as _json
     from llm_service import generate_compliance_report
-    from prompt import REFINEMENT_PROMPT_TEMPLATE
 
     if not initial_report.strip() or not user_input.strip():
         raise HTTPException(
@@ -456,8 +455,8 @@ async def generate_final_report(
         )
 
     try:
-        # Merge any assumed values (from the validator) into the user_input string
-        # so the final report LLM can see them clearly labelled.
+        # Merge assumed values (from the validator) into user_input so the
+        # final report LLM sees them clearly labelled.
         combined_user_input = user_input
         if assumed_values.strip():
             try:
@@ -474,19 +473,15 @@ async def generate_final_report(
             except _json.JSONDecodeError:
                 pass  # malformed JSON — ignore and proceed with raw user_input
 
-        refinement_prompt = REFINEMENT_PROMPT_TEMPLATE.format(
-            drawing_type=drawing_type,
-            previous_analysis=initial_report,
-            user_input=combined_user_input,
-        )
-
         vectordb = get_vectordb()
         embedding_model = get_embedding_model()
 
         final_report = generate_compliance_report(
+            previous_analysis=initial_report,
+            user_input=combined_user_input,
+            drawing_type=drawing_type,
             vectordb=vectordb,
             embedding_model=embedding_model,
-            Initial_report=refinement_prompt,
         )
 
         # Update Supabase DB with final report
