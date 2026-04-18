@@ -348,6 +348,93 @@ def _extract_missing_fields(report: str) -> list[str]:
     print("[Missing Fields] merged:", merged)
     return merged
 
+
+def _extract_quality_assessment(report: str) -> dict:
+    """Parse the '### Drawing Quality Assessment' block from the initial report.
+
+    Returns a dict with keys:
+        severity          : "ACCEPTABLE" | "REQUIRES_REVISION" | "REJECTED" | "UNKNOWN"
+        critical_defects  : int
+        rejection_narrative: str   # non-empty only when severity == REJECTED
+    """
+    severity = "UNKNOWN"
+    critical_defects = 0
+    rejection_narrative = "N/A"
+
+    # Find the Drawing Quality Assessment section
+    in_section = False
+    narrative_lines: list[str] = []
+    collecting_narrative = False
+
+    for line in report.splitlines():
+        stripped = line.strip()
+
+        # Detect section header
+        if stripped.startswith("#") and re.search(
+            r"drawing\s+quality\s+assessment", stripped, re.IGNORECASE
+        ):
+            in_section = True
+            continue
+
+        # Stop at the next heading of equal or higher level
+        if in_section and stripped.startswith("#"):
+            break
+
+        if not in_section:
+            continue
+
+        # ── Severity ──────────────────────────────────────────────────────────
+        sev_match = re.search(
+            r"\*{0,2}severity\*{0,2}\s*:\s*([A-Z_]+)", stripped, re.IGNORECASE
+        )
+        if sev_match:
+            raw_sev = sev_match.group(1).upper().strip()
+            if raw_sev in {"ACCEPTABLE", "REQUIRES_REVISION", "REJECTED"}:
+                severity = raw_sev
+            continue
+
+        # ── Critical Defects Count ─────────────────────────────────────────────
+        defect_match = re.search(
+            r"critical\s+defects?\s+count\s*:\s*(\d+)", stripped, re.IGNORECASE
+        )
+        if defect_match:
+            try:
+                critical_defects = int(defect_match.group(1))
+            except ValueError:
+                pass
+            continue
+
+        # ── Rejection Narrative ───────────────────────────────────────────────
+        narr_match = re.search(
+            r"\*{0,2}rejection\s+narrative\*{0,2}\s*:", stripped, re.IGNORECASE
+        )
+        if narr_match:
+            collecting_narrative = True
+            # Grab any text on the same line after the colon
+            after_colon = stripped[narr_match.end():].strip()
+            if after_colon and after_colon.lower() not in ("n/a", "na", ""):
+                narrative_lines.append(after_colon)
+            continue
+
+        if collecting_narrative and stripped:
+            narrative_lines.append(stripped)
+
+    if narrative_lines:
+        candidate = " ".join(narrative_lines).strip()
+        if candidate.lower() not in ("n/a", "na"):
+            rejection_narrative = candidate
+
+    print(
+        f"[Quality Assessment] severity={severity}, "
+        f"critical_defects={critical_defects}, "
+        f"narrative_length={len(rejection_narrative)}"
+    )
+    return {
+        "severity": severity,
+        "critical_defects": critical_defects,
+        "rejection_narrative": rejection_narrative,
+    }
+
 # -------- Routes -------- 
 @app.get("/")
 async def root():
@@ -415,12 +502,16 @@ async def generate_initial_report(
 
         report_id = db_result.data[0]["id"] if db_result.data else None
 
+        # --- Step 5: Extract quality assessment (severity + rejection narrative) ---
+        quality_assessment = _extract_quality_assessment(initial_report)
+
         return {
             "report": initial_report,
             "drawing_type": drawing_type,
             "missing_fields": missing_fields,
             "file_names": file_names,
             "report_id": report_id,
+            "quality_assessment": quality_assessment,
         }
 
     except HTTPException:

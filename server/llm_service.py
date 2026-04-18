@@ -182,22 +182,41 @@ def generate_compliance_report(
         context_texts = "IS code context unavailable."
 
     system_prompt = (
-        "You are a Senior Indian Civil Engineer specialising in RCC structural design "
-        "and IS code compliance. Produce a final professional compliance report.\n\n"
-        "MANDATORY RULES:\n"
-        "1. Every row in the compliance table MUST include an 'IS Code Reference' column "
-        "with the exact clause (e.g. IS 456:2000 Cl. 26.4.1, SP 34 Fig. 7, IS 13920 Cl. 6.2). "
-        "If no specific clause applies → write 'General Practice'.\n"
-        "treat it as Compliant unless the assumed value itself is non-compliant.\n"
-        "2. Be decisive: every checklist item must end with exactly one of — "
-        "Compliant / Non-Compliant / Missing Information / Cannot Verify / Not Applicable.\n"
-        "3. Output valid Markdown. Do not ask for more information.\n"
-        "4. Close the report with a '## IS Code References Used' section listing every "
-        "clause cited, grouped by code (IS 456:2000, SP 34, IS 13920, IS 1893, IS 875)."
+        "You are a Senior Indian Civil Engineer specialising in RCC compliance verification."
 
-        "ADDITIONAL RULES:\n"
-        "1. Apart from the given information in initial report and user input do not assume anything else. "
-        "2. "
+        "CORE ROLE:"
+        "You are ONLY a verification engine. You are NOT allowed to design or assume values."
+
+        "MANDATORY RULES:"
+        "1. NEVER assume, infer, or generate missing values."
+        "2. Use ONLY explicitly provided data from:"
+        "   - Drawing"
+        "   - User Input"
+        "3. If data is missing → write 'NOT PROVIDED'"
+        "4. If validation cannot be performed → status = 'NOT VERIFIABLE'"
+        "5. NEVER mark a parameter as compliant using assumed values"
+
+        "OUTPUT RULES:"
+        "- Every row must include: Extracted Value | Source | IS Code Reference | Status"
+        "- Allowed statuses: Compliant / Non-Compliant / Not Verifiable / Missing Information / Not Applicable"
+        "- Output must be strict Markdown"
+        "- Include a final section: '## IS Code References Used' grouped by code"
+
+        "CRITICAL:"
+        "If any value is assumed and used in validation, the output is INVALID."
+        ""
+        "VISUAL DETECTION RULES (VERY IMPORTANT):"
+        "- You MUST actively inspect geometry in the drawing."
+        "- If two structural elements (footings, beams, columns) overlap, intersect, or clash in plan → mark as NON-COMPLIANT."
+        "- Overlap includes: shared area, touching boundaries with no clearance, or one element intruding into another."
+        "- Do NOT ignore small overlaps — even partial intersection is NON-COMPLIANT."
+        "- If image clarity is insufficient → mark as CANNOT VERIFY, NOT 'No issue'."
+        ""
+        "UNIFORM MEMBER SIZE RULES (ELEMENT-SPECIFIC):"
+        "- For BEAMS: Uniform size across all spans → NON-COMPLIANT (loads and spans vary)."
+        "- For FOUNDATIONS: Uniform footing sizes → NON-COMPLIANT (column loads differ)."
+        "- For SLABS: Uniform thickness/reinforcement → ACCEPTABLE if spans and loading are similar."
+        "- If spans/loading vary significantly in slabs and still uniform → NON-COMPLIANT."
     )
 
     user_prompt = (
@@ -225,6 +244,13 @@ def generate_compliance_report(
     report = response.choices[0].message.content
     if not report:
         raise Exception("Empty response from API — please retry.")
+
+    # ── POST VALIDATION: anti-hallucination guard ───────────────────────────
+    if re.search(r"assumed|typical|standard practice|generally taken", report, re.IGNORECASE):
+        raise ValueError("❌ Model used assumed values in compliance. Rejecting output.")
+
+    if "Source" not in report:
+        raise ValueError("❌ Missing 'Source' column in output.")
 
     print("✅ Final compliance report generated.")
     return report

@@ -229,6 +229,22 @@ Evaluate real-world engineering soundness beyond code clauses. Flag issues even 
 
 Status values MUST be one of: Compliant | Non-Compliant | Missing Information | Cannot Verify | Not Applicable
 
+### Step 3A: Practical Engineering & Constructability Checks
+
+For each item below, write a one-sentence observation based on what you see in the drawing, then assign a status.
+Status values: Non-Compliant | Missing Information | Cannot Verify | Not Applicable | Acceptable
+
+| Check | Observation | Status |
+|---|---|---|
+| **P1. Overlapping Structural Elements** | | |
+| **P2. Uniform Member Sizes (Unrealistic Design)** | | |
+| **P3. Missing Design Basis Inputs (SBC / Floors / Loads)** | | |
+| **P4. Suitability of Foundation Type** | | |
+| **P5. Plan vs Schedule Consistency** | | |
+| **P6. Reinforcement Rationality** | | |
+| **P7. Missing Critical Notes** | | |
+| **P8. Constructability Issues** | | |
+
 ### Step 5: Report Missing or Wrong Information
 (List only items that are Missing Information, Non-Compliant, or Cannot Verify)
 1. <item>
@@ -242,6 +258,16 @@ Status values MUST be one of: Compliant | Non-Compliant | Missing Information | 
 - **Cannot Verify:** <n>
 - **Not Applicable:** <n>
 - **Overall Verdict:** <Pass / Fail / Conditional Pass — one sentence>
+
+### Drawing Quality Assessment
+Assign severity using this logic:
+- **ACCEPTABLE**: ≤2 Non-Compliant in the main table AND all P1-P8 statuses are Acceptable or Not Applicable.
+- **REQUIRES_REVISION**: 3-5 Non-Compliant in the main table OR 1-2 P-checks are Non-Compliant/Missing Information.
+- **REJECTED**: >5 Non-Compliant in the main table OR ≥3 P-checks are Non-Compliant/Missing Information OR any combination of {P1 Non-Compliant, P2 Non-Compliant, P3 Missing Information} occurring together.
+
+- **Severity:** <ACCEPTABLE / REQUIRES_REVISION / REJECTED>
+- **Critical Defects Count:** <number of P-checks that are Non-Compliant or Missing Information>
+- **Rejection Narrative:** <If REJECTED: write a formal 2-3 paragraph reviewer's rejection letter in professional engineering language. Cite the specific defects found (e.g., overlapping footings, missing SBC, uniform member sizes). Explain why these make the drawing unacceptable and what corrections are required. If REQUIRES_REVISION or ACCEPTABLE: write "N/A">
 """
 
 
@@ -398,6 +424,22 @@ Checklist:
 
 Status values MUST be one of: Compliant | Non-Compliant | Missing Information | Cannot Verify | Not Applicable
 
+### Step 3A: Practical Engineering & Constructability Checks
+
+For each item below, write a one-sentence observation based on what you see in the drawing, then assign a status.
+Status values: Non-Compliant | Missing Information | Cannot Verify | Not Applicable | Acceptable
+
+| Check | Observation | Status |
+|---|---|---|
+| **P1. Uniform Slab Thickness Everywhere (Unrealistic)** | | |
+| **P2. Same Reinforcement for All Panels (No Variation)** | | |
+| **P3. Missing Loading / Design Basis** | | |
+| **P4. Plan vs Schedule Consistency** | | |
+| **P5. Top Steel Absent in Continuous Spans** | | |
+| **P6. Reinforcement Rationality Across Spans** | | |
+| **P7. Missing Critical Notes** | | |
+| **P8. Constructability / Congestion Issues** | | |
+
 ### Step 5: Report Missing or Wrong Information
 1. <item>
 
@@ -409,6 +451,16 @@ Status values MUST be one of: Compliant | Non-Compliant | Missing Information | 
 - **Cannot Verify:** <n>
 - **Not Applicable:** <n>
 - **Overall Verdict:** <Pass / Fail / Conditional Pass — one sentence>
+
+### Drawing Quality Assessment
+Assign severity using this logic:
+- **ACCEPTABLE**: ≤2 Non-Compliant in the main table AND all P1-P8 statuses are Acceptable or Not Applicable.
+- **REQUIRES_REVISION**: 3-5 Non-Compliant in the main table OR 1-2 P-checks are Non-Compliant/Missing Information.
+- **REJECTED**: >5 Non-Compliant in the main table OR ≥3 P-checks are Non-Compliant/Missing Information OR P2 (same reinforcement everywhere) and P3 (missing loading) are both Non-Compliant/Missing.
+
+- **Severity:** <ACCEPTABLE / REQUIRES_REVISION / REJECTED>
+- **Critical Defects Count:** <number of P-checks that are Non-Compliant or Missing Information>
+- **Rejection Narrative:** <If REJECTED: write a formal 2-3 paragraph reviewer's rejection letter in professional engineering language. Cite specific defects. Explain why the drawing cannot be accepted and what corrections are required. If REQUIRES_REVISION or ACCEPTABLE: write "N/A">
 """
 
 
@@ -588,6 +640,22 @@ longitudinal bars through joints, 135° hooks on stirrups.
 
 Status values MUST be one of: Compliant | Non-Compliant | Missing Information | Cannot Verify | Not Applicable
 
+### Step 3A: Practical Engineering & Constructability Checks
+
+For each item below, write a one-sentence observation, then assign a status.
+Status values: Non-Compliant | Missing Information | Cannot Verify | Not Applicable | Acceptable
+
+| Check | Observation | Status |
+|---|---|---|
+| **P1. Uniform Beam Size / Same Reinforcement Everywhere** | | |
+| **P2. Identical Stirrup Spacing Across All Beams (No Variation)** | | |
+| **P3. Missing Loading / Design Basis** | | |
+| **P4. Plan vs Schedule Consistency** | | |
+| **P5. Top Steel Absent at Continuous Supports** | | |
+| **P6. Reinforcement Rationality (Varies with Span/Load)** | | |
+| **P7. Missing Critical Notes** | | |
+| **P8. Constructability / Congestion Issues** | | |
+
 ### Step 5: Report Missing or Wrong Information
 1. <item>
 
@@ -599,6 +667,16 @@ Status values MUST be one of: Compliant | Non-Compliant | Missing Information | 
 - **Cannot Verify:** <n>
 - **Not Applicable:** <n>
 - **Overall Verdict:** <Pass / Fail / Conditional Pass — one sentence>
+
+### Drawing Quality Assessment
+Assign severity using this logic:
+- **ACCEPTABLE**: ≤2 Non-Compliant in the main table AND all P1-P8 statuses are Acceptable or Not Applicable.
+- **REQUIRES_REVISION**: 3-5 Non-Compliant in the main table OR 1-2 P-checks are Non-Compliant/Missing Information.
+- **REJECTED**: >5 Non-Compliant in the main table OR ≥3 P-checks are Non-Compliant/Missing Information OR P1 (uniform sizes) and P2 (identical stirrups) are both Non-Compliant.
+
+- **Severity:** <ACCEPTABLE / REQUIRES_REVISION / REJECTED>
+- **Critical Defects Count:** <number of P-checks that are Non-Compliant or Missing Information>
+- **Rejection Narrative:** <If REJECTED: write a formal 2-3 paragraph reviewer's rejection letter in professional engineering language. Cite specific beam defects found. Explain why the drawing cannot be accepted. If REQUIRES_REVISION or ACCEPTABLE: write "N/A">
 """
 
 
@@ -706,6 +784,22 @@ Flag any inconsistencies found.
 
 Status values MUST be one of: Compliant | Non-Compliant | Missing Information | Cannot Verify | Not Applicable
 
+### Step 3A: Practical Engineering & Constructability Checks
+
+For each item below, write a one-sentence observation, then assign a status.
+Status values: Non-Compliant | Missing Information | Cannot Verify | Not Applicable | Acceptable
+
+| Check | Observation | Status |
+|---|---|---|
+| **P1. Uniform Column Size Everywhere (No Variation)** | | |
+| **P2. Same Reinforcement for All Columns (No Design Variation)** | | |
+| **P3. Missing Loading / Design Basis** | | |
+| **P4. Column Schedule vs Section Consistency** | | |
+| **P5. Tie Configuration (Open vs Closed Loops)** | | |
+| **P6. Steel % Variation Across Floors** | | |
+| **P7. Missing Critical Notes** | | |
+| **P8. Constructability / Congestion Issues** | | |
+
 ### Step 4: Inconsistencies Found
 1. <item or "None">
 
@@ -720,6 +814,16 @@ Status values MUST be one of: Compliant | Non-Compliant | Missing Information | 
 - **Cannot Verify:** <n>
 - **Not Applicable:** <n>
 - **Overall Verdict:** <Pass / Fail / Conditional Pass — one sentence>
+
+### Drawing Quality Assessment
+Assign severity using this logic:
+- **ACCEPTABLE**: ≤2 Non-Compliant in the main table AND all P1-P8 statuses are Acceptable or Not Applicable.
+- **REQUIRES_REVISION**: 3-5 Non-Compliant in the main table OR 1-2 P-checks are Non-Compliant/Missing Information.
+- **REJECTED**: >5 Non-Compliant in the main table OR ≥3 P-checks are Non-Compliant/Missing Information OR P1 (uniform size) and P2 (uniform reinforcement) are both Non-Compliant.
+
+- **Severity:** <ACCEPTABLE / REQUIRES_REVISION / REJECTED>
+- **Critical Defects Count:** <number of P-checks that are Non-Compliant or Missing Information>
+- **Rejection Narrative:** <If REJECTED: write a formal 2-3 paragraph reviewer's rejection letter in professional engineering language. Cite specific column defects. Explain why the drawing cannot be accepted and what corrections are required. If REQUIRES_REVISION or ACCEPTABLE: write "N/A">
 """
 
 
@@ -883,12 +987,16 @@ Generate a **professional Structural Compliance Report** with the following sect
    - Bar Spacing
    - Clear Cover
 
-7. **Practical Issues in Drawing**
+7. **Practical Issues in Drawing & Drawing Acceptance Decision**
    - Overlapping elements
-   - Uniform/unrealistic member sizes
-   - Missing SBC / floors
+   - Uniform/unrealistic member sizes (same size + reinforcement across all members)
+   - Missing SBC / number of floors / loading assumptions
    - Constructability issues
    - Reinforcement congestion
+   - Based on the initial analysis P1-P8 checks, include a **Drawing Acceptance Decision** sub-section:
+     - If the initial report severity was **REJECTED**: restate the rejection formally, expand the narrative with specific IS code references, and list mandatory corrections before resubmission.
+     - If **REQUIRES_REVISION**: list all required revisions clearly.
+     - If **ACCEPTABLE**: state that practical engineering checks were satisfactory.
 
 8. **Safety and Serviceability Checks**
    - Deflection
