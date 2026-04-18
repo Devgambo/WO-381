@@ -181,43 +181,48 @@ def generate_compliance_report(
         print(f"⚠ RAG retrieval failed: {e} — proceeding without context.")
         context_texts = "IS code context unavailable."
 
-    system_prompt = (
-        "You are a Senior Indian Civil Engineer specialising in RCC compliance verification."
+    system_prompt = """\
+You are a Senior Indian Civil Engineer specialising in RCC compliance verification.
 
-        "CORE ROLE:"
-        "You are ONLY a verification engine. You are NOT allowed to design or assume values."
+CORE ROLE:
+You are ONLY a verification engine. You are NOT allowed to design or assume values.
 
-        "MANDATORY RULES:"
-        "1. NEVER assume, infer, or generate missing values."
-        "2. Use ONLY explicitly provided data from:"
-        "   - Drawing"
-        "   - User Input"
-        "3. If data is missing → write 'NOT PROVIDED'"
-        "4. If validation cannot be performed → status = 'NOT VERIFIABLE'"
-        "5. NEVER mark a parameter as compliant using assumed values"
+MANDATORY RULES:
+1. NEVER assume, infer, or generate missing values.
+2. Use ONLY explicitly provided data from:
+   - Drawing
+   - User Input
+3. If data is missing → write 'NOT PROVIDED'.
+4. If validation cannot be performed → status = 'Not Verifiable'.
+5. NEVER mark a parameter as Compliant using assumed values. Rows backed by
+   [USER-ASSUMED] values must be marked 'Conditionally Compliant'.
 
-        "OUTPUT RULES:"
-        "- Every row must include: Extracted Value | Source | IS Code Reference | Status"
-        "- Allowed statuses: Compliant / Non-Compliant / Not Verifiable / Missing Information / Not Applicable"
-        "- Output must be strict Markdown"
-        "- Include a final section: '## IS Code References Used' grouped by code"
+OUTPUT RULES:
+- Every compliance row must include: Extracted Value | Source | IS Code Reference | Status
+- Source column tags: [DRAWING] | [USER-PROVIDED] | [USER-ASSUMED] | [NOT PROVIDED]
+- Allowed statuses: Compliant | Conditionally Compliant | Non-Compliant | Not Verifiable | Missing Information | Not Applicable
+- Output must be strict Markdown.
+- Include a final section '## IS Code References Used' grouped by code.
 
-        "CRITICAL:"
-        "If any value is assumed and used in validation, the output is INVALID."
-        ""
-        "VISUAL DETECTION RULES (VERY IMPORTANT):"
-        "- You MUST actively inspect geometry in the drawing."
-        "- If two structural elements (footings, beams, columns) overlap, intersect, or clash in plan → mark as NON-COMPLIANT."
-        "- Overlap includes: shared area, touching boundaries with no clearance, or one element intruding into another."
-        "- Do NOT ignore small overlaps — even partial intersection is NON-COMPLIANT."
-        "- If image clarity is insufficient → mark as CANNOT VERIFY, NOT 'No issue'."
-        ""
-        "UNIFORM MEMBER SIZE RULES (ELEMENT-SPECIFIC):"
-        "- For BEAMS: Uniform size across all spans → NON-COMPLIANT (loads and spans vary)."
-        "- For FOUNDATIONS: Uniform footing sizes → NON-COMPLIANT (column loads differ)."
-        "- For SLABS: Uniform thickness/reinforcement → ACCEPTABLE if spans and loading are similar."
-        "- If spans/loading vary significantly in slabs and still uniform → NON-COMPLIANT."
-    )
+CRITICAL:
+If any value is assumed and used to justify a 'Compliant' verdict, the output is INVALID.
+
+VISUAL DETECTION RULES:
+- Actively inspect geometry in the drawing.
+- If two structural elements (footings, beams, columns) overlap, intersect, or
+  clash in plan → mark as Non-Compliant.
+- Overlap includes shared area, touching boundaries with no clearance, or one
+  element intruding into another.
+- Do not ignore small overlaps — partial intersection is Non-Compliant.
+- If image clarity is insufficient → mark as Not Verifiable, never 'No issue'.
+
+UNIFORM MEMBER SIZE RULES:
+- BEAMS: uniform size across all spans → Non-Compliant (loads/spans vary).
+- FOUNDATIONS: uniform footing sizes → Non-Compliant (column loads differ).
+- SLABS: uniform thickness/reinforcement → Acceptable if spans and loading are
+  similar; Non-Compliant if spans/loading vary significantly and reinforcement
+  is still uniform.
+"""
 
     user_prompt = (
         f"{refinement_prompt}\n\n"
@@ -246,11 +251,22 @@ def generate_compliance_report(
         raise Exception("Empty response from API — please retry.")
 
     # ── POST VALIDATION: anti-hallucination guard ───────────────────────────
-    if re.search(r"assumed|typical|standard practice|generally taken", report, re.IGNORECASE):
-        raise ValueError("❌ Model used assumed values in compliance. Rejecting output.")
+    # Only reject if a row is marked "Compliant" AND contains assumption language.
+    # "Conditionally Compliant" rows are explicitly allowed for [USER-ASSUMED] values.
+    bad_rows = re.findall(
+        r"^\|(?![^\n|]*Conditionally)[^\n]*\b(?:assumed|typical|standard practice|generally taken)\b[^\n]*\|[^\n]*\bCompliant\b[^\n]*\|",
+        report,
+        re.IGNORECASE | re.MULTILINE,
+    )
+    if bad_rows:
+        raise ValueError(
+            f"❌ Model marked {len(bad_rows)} row(s) Compliant using assumption language. "
+            f"First offender: {bad_rows[0][:120]}…"
+        )
 
-    if "Source" not in report:
-        raise ValueError("❌ Missing 'Source' column in output.")
+    # Confirm at least one table header contains the Source column.
+    if not re.search(r"^\|[^\n]*\bSource\b[^\n]*\|", report, re.MULTILINE):
+        raise ValueError("❌ Output has no Markdown table with a 'Source' column.")
 
     print("✅ Final compliance report generated.")
     return report

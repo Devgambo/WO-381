@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(git rm:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(python -c \"import llm_service; import llm_handler\")",
+      "Bash(python -m py_compile llm_service.py)",
+      "Bash(python -m py_compile llm_handler.py)"
     ]
   }
 }

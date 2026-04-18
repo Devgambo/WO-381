@@ -20,7 +20,8 @@ VISION_MODEL = "gpt-4o"
 # At 200 DPI an A1 drawing renders to ~6600×4700 px (~30 MB PNG) — always dropped.
 # 150 DPI + 2048-px cap keeps every page well under 5 MB while still being sharp
 # enough to read reinforcement schedules and dimension annotations.
-_MAX_DIM = 2048
+_MAX_DIM = 3072       # was 2048 — A1 sheets need more pixels for schedule text
+_RENDER_DPI = 220     # was 150 — small reinforcement annotations were mushy at 150
 
 
 def pdf_to_images(pdf_source):
@@ -37,13 +38,19 @@ def pdf_to_images(pdf_source):
             doc = fitz.open(pdf_source)
         for page_num in range(len(doc)):
             page = doc.load_page(page_num)
-            pix = page.get_pixmap(dpi=150)
+            pix = page.get_pixmap(dpi=_RENDER_DPI)
             img = Image.open(io.BytesIO(pix.tobytes("png")))
             # Resize so the longest side is at most _MAX_DIM pixels.
             w, h = img.size
             if max(w, h) > _MAX_DIM:
                 scale = _MAX_DIM / max(w, h)
                 img = img.resize((int(w * scale), int(h * scale)), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            size_mb = len(buf.getvalue()) / (1024 * 1024)
+            if size_mb > 18:
+                print(f"⚠ Page {page_num + 1} rendered to {size_mb:.1f} MB — approaching OpenAI cap. "
+                      f"Consider lowering _RENDER_DPI.")
             images.append(img)
         doc.close()
     except Exception as e:
