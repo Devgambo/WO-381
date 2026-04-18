@@ -243,17 +243,28 @@ def _extract_missing_fields(report: str) -> list[str]:
             if criteria and criteria.lower() not in ('criteria', 'none', 'n/a', 'nil', '---'):
                 missing_from_table.append(criteria)
 
-    # ── 2. Extract from Step 5 section ────────────────────────────
+    # ── 2. Extract from Step 5 / Phase 4 section ─────────────────
     in_section = False
     for line in report.splitlines():
         stripped = line.strip()
-        # Detect the section header (Step 5: Report Missing or Wrong Information)
-        if stripped.startswith('#') and re.search(r'(step\s*5|missing.*(?:wrong|information))', stripped, re.IGNORECASE):
+        # Detect the section header — supports BOTH old format (Step 5: Report
+        # Missing or Wrong Information) and new format (Phase 4 / 4.1 Report
+        # of Missing / Wrong / Unverifiable Items)
+        if stripped.startswith('#') and re.search(
+            r'(step\s*5|phase\s*4|4\.1\b|missing.*(?:wrong|information|unverifiable))',
+            stripped, re.IGNORECASE
+        ):
             in_section = True
             continue
-        # Stop at next heading or Summary section
+        # Stop at next heading or Summary section (but skip sub-headings like 4.2)
         if in_section and stripped.startswith('#'):
-            break
+            # Allow #### 4.1 sub-headings within Phase 4, stop at ## or # or Phase 4.2/4.3
+            if re.search(r'(4\.2\b|4\.3\b|summary|quality|severity)', stripped, re.IGNORECASE):
+                break
+            # If it's a same-level or higher heading not about 4.1, stop
+            heading_level = len(stripped) - len(stripped.lstrip('#'))
+            if heading_level <= 3:  # ### or higher
+                break
         if not in_section:
             continue
         # Skip empty, table, and separator lines
@@ -361,26 +372,40 @@ def _extract_quality_assessment(report: str) -> dict:
     critical_defects = 0
     rejection_narrative = "N/A"
 
-    # Find the Drawing Quality Assessment section
+    # Find the Drawing Quality Assessment / Summary of Compliance / Phase 4 section
     in_section = False
+    in_summary_section = False
     narrative_lines: list[str] = []
     collecting_narrative = False
 
     for line in report.splitlines():
         stripped = line.strip()
 
-        # Detect section header
+        # Detect section header — supports both
+        # "Drawing Quality Assessment" (old+new) and "Summary of Compliance"
+        # and "Phase 4: Summary & Verdict"
         if stripped.startswith("#") and re.search(
-            r"drawing\s+quality\s+assessment", stripped, re.IGNORECASE
+            r"drawing\s+quality\s+assessment|summary.*compliance|phase\s*4",
+            stripped, re.IGNORECASE
         ):
-            in_section = True
+            if re.search(r"drawing\s+quality", stripped, re.IGNORECASE):
+                in_section = True
+            else:
+                in_summary_section = True
             continue
 
         # Stop at the next heading of equal or higher level
-        if in_section and stripped.startswith("#"):
-            break
+        if (in_section or in_summary_section) and stripped.startswith("#"):
+            # Allow sub-headings within the section (e.g., #### 4.2, #### 4.3)
+            if re.search(r"drawing\s+quality\s+assessment", stripped, re.IGNORECASE):
+                in_section = True
+                in_summary_section = False
+                continue
+            heading_level = len(stripped) - len(stripped.lstrip('#'))
+            if heading_level <= 3:  # ### or higher = new section
+                break
 
-        if not in_section:
+        if not in_section and not in_summary_section:
             continue
 
         # ── Severity ──────────────────────────────────────────────────────────
@@ -391,6 +416,20 @@ def _extract_quality_assessment(report: str) -> dict:
             raw_sev = sev_match.group(1).upper().strip()
             if raw_sev in {"ACCEPTABLE", "REQUIRES_REVISION", "REJECTED"}:
                 severity = raw_sev
+            continue
+
+        # ── Overall Verdict (fallback severity from Summary of Compliance) ───
+        verdict_match = re.search(
+            r"\*{0,2}overall\s+verdict\*{0,2}\s*:\s*(.+)", stripped, re.IGNORECASE
+        )
+        if verdict_match and severity == "UNKNOWN":
+            verdict_text = verdict_match.group(1).upper()
+            if "FAIL" in verdict_text or "REJECT" in verdict_text:
+                severity = "REJECTED"
+            elif "CONDITIONAL" in verdict_text or "REVISION" in verdict_text:
+                severity = "REQUIRES_REVISION"
+            elif "PASS" in verdict_text or "ACCEPT" in verdict_text:
+                severity = "ACCEPTABLE"
             continue
 
         # ── Critical Defects Count ─────────────────────────────────────────────

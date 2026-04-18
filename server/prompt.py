@@ -57,6 +57,14 @@ SCHEDULE READING (CRITICAL):
 - Grade of concrete and grade of steel may be written ONCE as a heading over
   the schedule, or repeated per storey block. Search ALL headings and
   sub-headings for "GRADE OF STEEL" and "GRADE OF CONCRETE" text.
+- CRITICAL: Grade headings are FREQUENTLY a SINGLE LINE printed at the
+  TOP of a schedule block (e.g., "GRADE OF CONCRETE: M25" or
+  "CONCRETE: M25, STEEL: Fe 500" above the column schedule table). You
+  MUST read every line in and around the schedule — if you see "M20",
+  "M25", "M30", "Fe 500", "Fe 415", or "HYSD" ANYWHERE on the sheet,
+  report it. NEVER mark Grade of Concrete or Grade of Steel as
+  "NOT ON DRAWING" or "Missing Information" unless you have exhaustively
+  scanned every text element on every page and confirmed zero matches.
 
 FOOTING SCHEDULES:
 - Footings are labelled F1, F2, F3, … Each row gives Length × Breadth × Depth
@@ -132,6 +140,16 @@ callouts) for the phrases `GRADE OF CONCRETE`, `GRADE OF STEEL`, `M__`,
 - Inferred steel grade from prefix convention:
 
 #### 1.4 Column Schedule Matrix (ONE row per column × per storey level)
+
+**⚠ CRITICAL — DO NOT SIMPLIFY OR COLLAPSE THE SCHEDULE ⚠**
+EVERY column on the drawing may have DIFFERENT reinforcement. You MUST
+transcribe EACH row of the schedule EXACTLY as it appears. Common Indian
+foundation drawings show diverse configs such as:
+  10Y12, 10Y16, 8Y12, 8Y16+2Y12, 10Y20, 6Y16+2Y12, etc.
+If you see different bar configurations for different columns, each one gets
+its own row. NEVER assume uniformity (e.g., writing "8Y16" for all columns
+when the drawing clearly shows varied configurations is a CRITICAL ERROR).
+
 For EVERY column ID in the schedule AND EVERY storey level it appears under,
 fill one row. Do not merge rows. If the schedule has 5 columns × 4 storey
 levels, you must produce 20 rows.
@@ -198,7 +216,7 @@ Compliant | Non-Compliant | Missing Information | Cannot Verify | Not Applicable
 | 1 | Grade of Concrete | (quote from Phase 1.3) | IS 456 Table 5; min M20 for RCC; M25+ for moderate exposure | | |
 | 2 | Grade of Steel | (quote from Phase 1.3 — accept either explicit "Fe 500" text OR Y-prefix convention as sufficient) | IS 1786; Fe 500 preferred | | |
 | 3 | Lap Length | (quote from Phase 1.2) | SP 34; ≥ 50d; staggered, ≤ 50% at one section | | |
-| 4 | Clear Cover — Footing | (quote from Phase 1.2) | IS 456 Cl. 26.4.2.1; ≥ 50 mm (≥ 75 mm if directly on soil without PCC) | | |
+| 4 | Clear Cover — Footing | (quote from Phase 1.2 + Phase 1.7 PCC status) | IS 456 Cl. 26.4.2.1; ≥ 50 mm if PCC/blinding is provided below footing (Phase 1.7 confirms PCC → 50 mm is acceptable); ≥ 75 mm if directly on soil WITHOUT PCC. If drawing states 25 mm cover AND PCC is shown → flag as 'Needs Clarification / Questionable' (not outright Non-Compliant). If cover < 50 mm even with PCC → Non-Compliant. | | |
 | 5 | Clear Cover — Column | (quote from Phase 1.2) | IS 456 Cl. 26.4.2.1; 40–50 mm typical | | |
 | 6 | Clear Cover — Beam | (quote from Phase 1.2) | IS 456 Cl. 26.4.2.1; 25–45 mm by exposure | | |
 | 7 | Clear Cover — Slab | (quote from Phase 1.2) | IS 456 Cl. 26.4.2.1; 20–30 mm by exposure | | |

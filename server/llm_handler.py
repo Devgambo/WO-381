@@ -107,7 +107,7 @@ def run_specialist_agent(images: list, drawing_type: str) -> str:
                     "Structural drawing images are attached to this message and ARE fully visible to you. "
                     "You MUST analyze them directly. "
                     "NEVER say you cannot view or analyze images. "
-                    "Begin your response IMMEDIATELY with '### Step 0: Initial Document Check' — "
+                    "Begin your response IMMEDIATELY with '### Phase 1' — "
                     "no preamble, no disclaimers, no capability statements."
                 ),
             },
@@ -117,7 +117,7 @@ def run_specialist_agent(images: list, drawing_type: str) -> str:
             },
         ],
         temperature=0,
-        max_tokens=4096,
+        max_tokens=16000,
     )
 
     return response.choices[0].message.content
