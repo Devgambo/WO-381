@@ -1,19 +1,23 @@
+import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { downloadPdf } from "../api";
-import { useState } from "react";
+import { useAuth } from "../context/AuthContext";
 
-export default function ReportDisplay({ report, title, filenamePrefix }) {
+export default function ReportDisplay({ report, title, filenamePrefix, onError }) {
+    const { token } = useAuth();
     const [downloading, setDownloading] = useState(false);
 
     if (!report) return null;
+
+    const safePrefix = filenamePrefix || "report";
 
     const handleDownloadMd = () => {
         const blob = new Blob([report], { type: "text/markdown" });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `${filenamePrefix}_${Date.now()}.md`;
+        a.download = `${safePrefix}.md`;
         document.body.appendChild(a);
         a.click();
         a.remove();
@@ -23,9 +27,10 @@ export default function ReportDisplay({ report, title, filenamePrefix }) {
     const handleDownloadPdf = async () => {
         setDownloading(true);
         try {
-            await downloadPdf(report, filenamePrefix);
+            await downloadPdf(report, safePrefix, token);
         } catch (err) {
-            alert("PDF download failed: " + err.message);
+            if (onError) onError(err.message);
+            else console.error("PDF download failed:", err);
         } finally {
             setDownloading(false);
         }
@@ -35,7 +40,6 @@ export default function ReportDisplay({ report, title, filenamePrefix }) {
         <div className="mt-2">
             <h3 className="text-base font-semibold text-[var(--color-accent-light)] mb-3">{title}</h3>
 
-            {/* Actions */}
             <div className="flex gap-2.5 flex-wrap mb-5">
                 <button
                     onClick={handleDownloadMd}
@@ -52,7 +56,6 @@ export default function ReportDisplay({ report, title, filenamePrefix }) {
                 </button>
             </div>
 
-            {/* Report Content */}
             <div className="bg-[var(--color-bg-glass)] border border-[var(--color-border-subtle)] rounded-lg p-6 max-h-[600px] overflow-y-auto text-sm leading-7 markdown-body">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{report}</ReactMarkdown>
             </div>

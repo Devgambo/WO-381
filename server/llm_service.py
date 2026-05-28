@@ -1,32 +1,22 @@
 import json
+import logging
 import re
-import os
-from openai import OpenAI, APIError
-from dotenv import load_dotenv
+from typing import NoReturn
 
-load_dotenv()
+from openai import APIError
 
-_api_key = os.getenv("OPENAI_API_KEY")
-if not _api_key:
-    raise ValueError("OPENAI_API_KEY not found in environment variables. Add it to your .env file.")
+from openai_client import (
+    FINAL_REPORT_MODEL,
+    ORCHESTRATOR_MODEL,
+    VALIDATOR_MODEL,
+    get_openai_client,
+)
 
-client = OpenAI(api_key=_api_key)
-
-# ── Model routing ────────────────────────────────────────────────────────────
-# gpt-4o-mini  — fast cheap model for classification and validation (text only).
-# o4-mini      — reasoning model for final report generation. Compliance checking
-#                is a multi-step rule-matching task; reasoning models handle this
-#                significantly better than standard LLMs.
-ORCHESTRATOR_MODEL = "gpt-4o-mini"
-VALIDATOR_MODEL    = "gpt-4o-mini"
-FINAL_REPORT_MODEL = "o4-mini"
+log = logging.getLogger(__name__)
 
 
 def classify_drawing_type(base64_images: list[str]) -> str:
-    """Classify the drawing type from images using the Orchestrator prompt.
-
-    Returns one of: "foundation", "slab", "beam", "column", "unknown".
-    """
+    """Classify the drawing type from images. Returns 'foundation' | 'slab' | 'beam' | 'column' | 'unknown'."""
     from prompt import ORCHESTRATOR_PROMPT
 
     messages = [
@@ -44,52 +34,50 @@ def classify_drawing_type(base64_images: list[str]) -> str:
         }
     ]
 
-    print("🔍 Orchestrator: classifying drawing type...")
+    log.info("Orchestrator: classifying drawing type")
     try:
-        response = client.chat.completions.create(
+        response = get_openai_client().chat.completions.create(
             model=ORCHESTRATOR_MODEL,
             messages=messages,
             temperature=0,
             max_tokens=100,
             response_format={"type": "json_object"},
         )
-    except Exception as e:
-        print(f"❌ Orchestrator classification failed: {e}")
+    except Exception:
+        log.exception("Orchestrator classification failed")
         return "unknown"
 
-    raw = response.choices[0].message.content.strip()
-    print(f"🔍 Orchestrator raw response: {raw}")
+    raw = (response.choices[0].message.content or "").strip()
+    log.debug("Orchestrator raw response: %s", raw)
 
+    drawing_type = "unknown"
     try:
         result = json.loads(raw)
-        drawing_type = result.get("type", "unknown").lower().strip()
+        drawing_type = str(result.get("type", "unknown")).lower().strip()
     except json.JSONDecodeError:
         match = re.search(r'"type"\s*:\s*"(\w+)"', raw)
         drawing_type = match.group(1).lower().strip() if match else "unknown"
 
     valid_types = {"foundation", "slab", "beam", "column", "unknown"}
     if drawing_type not in valid_types:
-        print(f"⚠ Unexpected type '{drawing_type}', defaulting to unknown.")
+        log.warning("Unexpected drawing type '%s', defaulting to unknown.", drawing_type)
         drawing_type = "unknown"
 
-    print(f"✅ Orchestrator: classified as '{drawing_type}'.")
+    log.info("Orchestrator: classified as '%s'", drawing_type)
     return drawing_type
 
 
 def validate_user_input(missing_fields: list[str], user_answers: dict) -> dict:
-    """Validate user-supplied answers for missing data fields.
-
-    Returns {"valid": bool, "invalid_fields": list, "assumed_values": dict}.
-    """
+    """Validate user-supplied answers. Returns {valid, invalid_fields, assumed_values}."""
     from prompt import VALIDATOR_PROMPT
 
-    fields_json  = json.dumps(missing_fields, indent=2)
+    fields_json = json.dumps(missing_fields, indent=2)
     answers_json = json.dumps(user_answers, indent=2, ensure_ascii=False)
     prompt = VALIDATOR_PROMPT.format(fields_json=fields_json, answers_json=answers_json)
 
-    print("🔍 Validator: checking user-supplied data...")
+    log.info("Validator: checking user-supplied data")
     try:
-        response = client.chat.completions.create(
+        response = get_openai_client().chat.completions.create(
             model=VALIDATOR_MODEL,
             messages=[
                 {
@@ -102,27 +90,36 @@ def validate_user_input(missing_fields: list[str], user_answers: dict) -> dict:
             max_tokens=1024,
             response_format={"type": "json_object"},
         )
-    except Exception as e:
-        print(f"❌ Validator error: {e} — treating input as valid.")
+    except Exception:
+        log.exception("Validator error — treating input as valid.")
         return {"valid": True, "invalid_fields": [], "assumed_values": {}}
 
-    raw = response.choices[0].message.content.strip()
-    print(f"🔍 Validator raw response: {raw}")
+    raw = (response.choices[0].message.content or "").strip()
+    log.debug("Validator raw response: %s", raw)
 
+    result: dict = {}
     try:
         result = json.loads(raw)
     except json.JSONDecodeError:
         json_match = re.search(r"\{.*\}", raw, re.DOTALL)
-        result = json.loads(json_match.group()) if json_match else {}
+        if json_match:
+            try:
+                result = json.loads(json_match.group())
+            except json.JSONDecodeError:
+                log.warning("Validator output not parseable JSON — treating input as valid.")
+                result = {}
 
     assumed = result.get("assumed_values", {})
-    print(f"✅ Validator: valid={result.get('valid', True)}, "
-          f"invalid_count={len(result.get('invalid_fields', []))}, "
-          f"assumed_count={len(assumed)}")
+    log.info(
+        "Validator: valid=%s invalid=%d assumed=%d",
+        result.get("valid", True),
+        len(result.get("invalid_fields", [])),
+        len(assumed),
+    )
     return {
         "valid": result.get("valid", True),
         "invalid_fields": result.get("invalid_fields", []),
-        "assumed_values": assumed,   # field → "assumed value — reason"
+        "assumed_values": assumed,
     }
 
 
@@ -133,52 +130,40 @@ def generate_compliance_report(
     vectordb,
     embedding_model,
     k: int = 15,
-) -> str:
-    """Generate the final compliance report using RAG + o4-mini reasoning.
-
-    Steps:
-    1. Format REFINEMENT_PROMPT_TEMPLATE with the supplied inputs.
-    2. Embed the formatted prompt to retrieve top-k IS code chunks from ChromaDB.
-    3. Append retrieved context and call o4-mini for multi-step compliance checking.
-
-    Args:
-        previous_analysis: Initial extraction report markdown (from specialist agent).
-        user_input:        User-supplied / assumed values for missing fields.
-        drawing_type:      One of "foundation", "slab", "beam", "column".
-        vectordb:          VectorStore instance.
-        embedding_model:   HuggingFace embedding model.
-        k:                 Number of IS code chunks to retrieve (default 15).
+) -> tuple[str, bool]:
+    """Generate the final compliance report using RAG + reasoning model.
 
     Returns:
-        Final compliance report as a Markdown string.
+        (report_markdown, rag_succeeded). When rag_succeeded is False the caller
+        can warn the user that the verdict was produced without IS-code context.
     """
     from prompt import REFINEMENT_PROMPT_TEMPLATE
 
-    # ── 1. Build refinement prompt from template ─────────────────────────────
     refinement_prompt = REFINEMENT_PROMPT_TEMPLATE.format(
         drawing_type=drawing_type,
         previous_analysis=previous_analysis,
         user_input=user_input,
     )
 
-    # ── 2. RAG retrieval ────────────────────────────────────────────────────
-    print("📚 Embedding query and retrieving IS code context...")
+    log.info("Embedding query and retrieving IS code context")
+    rag_succeeded = False
     try:
         query_embedding = embedding_model.embed_query(refinement_prompt)
         retrieved = vectordb.query([query_embedding], n_results=k)
         if retrieved:
             context_texts = "\n\n".join(
-                f"[Source: {r['metadata'].get('source_file', 'N/A')}, "
-                f"Section: {r['metadata'].get('section_number', 'N/A')}, "
-                f"Clause: {r['metadata'].get('clause_id', 'N/A')}, "
-                f"Content Type: {r['metadata'].get('content_type', 'N/A')}]\n{r['document']}"
+                f"[Source: {(r.get('metadata') or {}).get('source_file', 'N/A')}, "
+                f"Section: {(r.get('metadata') or {}).get('section_number', 'N/A')}, "
+                f"Clause: {(r.get('metadata') or {}).get('clause_id', 'N/A')}, "
+                f"Content Type: {(r.get('metadata') or {}).get('content_type', 'N/A')}]\n{r.get('document', '')}"
                 for r in retrieved
             )
+            rag_succeeded = True
         else:
-            print("⚠ No IS code context retrieved — proceeding without RAG context.")
+            log.warning("No IS code context retrieved — proceeding without RAG context.")
             context_texts = "No relevant IS code context found."
-    except Exception as e:
-        print(f"⚠ RAG retrieval failed: {e} — proceeding without context.")
+    except Exception:
+        log.exception("RAG retrieval failed — proceeding without context.")
         context_texts = "IS code context unavailable."
 
     system_prompt = """\
@@ -230,16 +215,13 @@ UNIFORM MEMBER SIZE RULES:
         f"## Retrieved IS Code Context (from knowledge base)\n{context_texts}"
     )
 
-    # ── 4. Call o4-mini (reasoning model) ───────────────────────────────────
-    # o4-mini does not accept a temperature parameter (uses internal reasoning).
-    # Use max_completion_tokens (covers both output + reasoning tokens).
-    print(f"🤖 Calling {FINAL_REPORT_MODEL} for final report generation...")
+    log.info("Calling %s for final report generation", FINAL_REPORT_MODEL)
     try:
-        response = client.chat.completions.create(
+        response = get_openai_client().chat.completions.create(
             model=FINAL_REPORT_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": user_prompt},
+                {"role": "user", "content": user_prompt},
             ],
             max_completion_tokens=8000,
         )
@@ -248,34 +230,37 @@ UNIFORM MEMBER SIZE RULES:
 
     report = response.choices[0].message.content
     if not report:
-        raise Exception("Empty response from API — please retry.")
+        raise ValueError("Empty response from compliance model — please retry.")
 
-    # ── POST VALIDATION: anti-hallucination guard ───────────────────────────
-    # Only reject if a row is marked "Compliant" AND contains assumption language.
-    # "Conditionally Compliant" rows are explicitly allowed for [USER-ASSUMED] values.
-    bad_rows = re.findall(
-        r"^\|(?![^\n|]*Conditionally)[^\n]*\b(?:assumed|typical|standard practice|generally taken)\b[^\n]*\|[^\n]*\bCompliant\b[^\n]*\|",
-        report,
-        re.IGNORECASE | re.MULTILINE,
-    )
+    # Post validation: a row marked "Compliant" must not also rely on assumption
+    # language. Conditionally-Compliant rows are allowed to.
+    bad_rows = []
+    for line in report.splitlines():
+        if not line.startswith("|"):
+            continue
+        if "Conditionally" in line:
+            continue
+        if not re.search(r"\bCompliant\b", line):
+            continue
+        if re.search(r"\b(assumed|generally taken)\b", line, re.IGNORECASE):
+            bad_rows.append(line)
     if bad_rows:
         raise ValueError(
-            f"❌ Model marked {len(bad_rows)} row(s) Compliant using assumption language. "
+            f"Model marked {len(bad_rows)} row(s) Compliant using assumption language. "
             f"First offender: {bad_rows[0][:120]}…"
         )
 
-    # Confirm at least one table header contains the Source column.
     if not re.search(r"^\|[^\n]*\bSource\b[^\n]*\|", report, re.MULTILINE):
-        raise ValueError("❌ Output has no Markdown table with a 'Source' column.")
+        raise ValueError("Output has no Markdown table with a 'Source' column.")
 
-    print("✅ Final compliance report generated.")
-    return report
+    log.info("Final compliance report generated.")
+    return report, rag_succeeded
 
 
-def _handle_api_error(e: APIError) -> None:
+def _handle_api_error(e: APIError) -> NoReturn:
     """Translate APIError into a user-friendly ValueError."""
     code = getattr(e, "status_code", None)
-    msg  = str(e)
+    msg = str(e)
     if code == 401 or "401" in msg or "Unauthorized" in msg:
         raise ValueError(
             "Invalid OpenAI API key. Check OPENAI_API_KEY in your .env file."

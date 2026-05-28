@@ -154,21 +154,20 @@ def clean_ocr_file(fp: Path):
     # Remove "SECTION · XX" noise (OCR artifact with dot separators)
     content = re.sub(r'#\s*SECTION\s*[·\.\-]\s*\w+\s*\n', '', content)
 
-    # Clean common LaTeX fragments to plain text
+    # Clean common LaTeX fragments to plain text. (pattern, replacement, flags)
     latex_replacements = [
-        (r'\$\\mathrm\{N\}\s*/\s*\\mathrm\{mm\}\^\{?2\}?\$', 'N/mm²'),
-        (r'\$\\mathrm\{mm\}\^\{?2\}?\$', 'mm²'),
-        (r'\$\\mathrm\{N\}\\?\$', 'N'),
-        (r'\$\\mathrm\{mm\}\\?\$', 'mm'),
-        (r'\$\\mathrm\{Fe\s*(\d+)\}\\?\$', r'Fe\1'),
-        (r'\$\\mathrm\{~([^}]+)\}\\?\$', r'\1'),
-        (r'\$\\pm\s*', '±'),
-        (r'\\pm\s*', '±'),
-        (r'\$\s*$', '', re.MULTILINE),  # trailing lone $
+        (r'\$\\mathrm\{N\}\s*/\s*\\mathrm\{mm\}\^\{?2\}?\$', 'N/mm²', 0),
+        (r'\$\\mathrm\{mm\}\^\{?2\}?\$', 'mm²', 0),
+        (r'\$\\mathrm\{N\}\\?\$', 'N', 0),
+        (r'\$\\mathrm\{mm\}\\?\$', 'mm', 0),
+        (r'\$\\mathrm\{Fe\s*(\d+)\}\\?\$', r'Fe\1', 0),
+        (r'\$\\mathrm\{~([^}]+)\}\\?\$', r'\1', 0),
+        (r'\$\\pm\s*', '±', 0),
+        (r'\\pm\s*', '±', 0),
+        (r'\$\s*$', '', re.MULTILINE),
     ]
-    for pattern, repl, *flags in latex_replacements:
-        f = flags[0] if flags else 0
-        content = re.sub(pattern, repl, content, flags=f)
+    for pattern, repl, flags in latex_replacements:
+        content = re.sub(pattern, repl, content, flags=flags)
 
     # Remove duplicate consecutive section headers (OCR double-scans)
     content = re.sub(

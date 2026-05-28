@@ -1,10 +1,11 @@
 import argparse
-from embedding_service import embedding_model
-from vector_db import VectorStore
-from data_loader import read_md_files_from_folder
-import uuid
 import os
 import shutil
+import uuid
+
+from data_loader import read_md_files_from_folder
+from embedding_service import get_embedding_model
+from vector_db import VectorStore
 
 def ingest_data(dry_run=False):
     print("Loading markdown files...")
@@ -29,13 +30,10 @@ def ingest_data(dry_run=False):
     ids = [str(uuid.uuid4()) for _ in range(len(chunks))]
     
     # Extract metadata by removing 'content' from each chunk dict
-    metadatas = []
-    for c in chunks:
-        m = c.copy()
-        del m['content']
-        metadatas.append(m)
-    
+    metadatas = [{k: v for k, v in c.items() if k != 'content'} for c in chunks]
+
     # Batch embeddings to avoid OOM with BAAI/bge-large-en-v1.5
+    embedding_model = get_embedding_model()
     EMBED_BATCH = 32
     embeddings = []
     for i in range(0, len(texts), EMBED_BATCH):

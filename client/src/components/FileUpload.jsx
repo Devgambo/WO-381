@@ -5,9 +5,6 @@ const ACCEPTED = {
   "application/pdf": [".pdf"],
   "image/png": [".png"],
   "image/jpeg": [".jpg", ".jpeg"],
-  "image/gif": [".gif"],
-  "image/bmp": [".bmp"],
-  "image/webp": [".webp"],
 };
 
 export default function FileUpload({ files, setFiles }) {
@@ -45,7 +42,7 @@ export default function FileUpload({ files, setFiles }) {
               Drag & drop PDF or image files here
             </p>
             <span className="text-xs text-[var(--color-text-muted)] mt-1 block">
-              or click to browse • Supports PDF, PNG, JPG, GIF, BMP, WebP
+              or click to browse • Supports PDF, PNG, JPG
             </span>
           </>
         )}

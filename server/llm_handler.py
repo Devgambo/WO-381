@@ -1,46 +1,34 @@
-import os
 import base64
 import io
-from openai import OpenAI
-from dotenv import load_dotenv
+import logging
+
 import fitz  # PyMuPDF
 from PIL import Image
 
-load_dotenv()
+from openai_client import VISION_MODEL, get_openai_client
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-
-# gpt-4o: best multimodal model for structured extraction from engineering drawings.
-# "detail: high" tiles each page into 512px patches — critical for reading fine
-# reinforcement schedules and dimension annotations on structural drawings.
-VISION_MODEL = "gpt-4o"
-
+log = logging.getLogger(__name__)
 
 # OpenAI silently drops images larger than ~20 MB.
 # At 200 DPI an A1 drawing renders to ~6600×4700 px (~30 MB PNG) — always dropped.
-# 150 DPI + 2048-px cap keeps every page well under 5 MB while still being sharp
-# enough to read reinforcement schedules and dimension annotations.
-_MAX_DIM = 3072       # was 2048 — A1 sheets need more pixels for schedule text
-_RENDER_DPI = 220     # was 150 — small reinforcement annotations were mushy at 150
+# Cap so each page lands well under 5 MB while keeping fine reinforcement
+# annotations readable.
+_MAX_DIM = 3072
+_RENDER_DPI = 220
 
 
 def pdf_to_images(pdf_source):
-    """Convert each page of a PDF to PIL Images, capped at 2048 px.
-
-    Args:
-        pdf_source: file path (str) or raw PDF bytes.
-    """
+    """Convert each PDF page to a PIL Image, longest side capped at _MAX_DIM."""
     images = []
+    if isinstance(pdf_source, (bytes, bytearray)):
+        doc = fitz.open(stream=pdf_source, filetype="pdf")
+    else:
+        doc = fitz.open(pdf_source)
     try:
-        if isinstance(pdf_source, (bytes, bytearray)):
-            doc = fitz.open(stream=pdf_source, filetype="pdf")
-        else:
-            doc = fitz.open(pdf_source)
         for page_num in range(len(doc)):
             page = doc.load_page(page_num)
             pix = page.get_pixmap(dpi=_RENDER_DPI)
             img = Image.open(io.BytesIO(pix.tobytes("png")))
-            # Resize so the longest side is at most _MAX_DIM pixels.
             w, h = img.size
             if max(w, h) > _MAX_DIM:
                 scale = _MAX_DIM / max(w, h)
@@ -49,13 +37,14 @@ def pdf_to_images(pdf_source):
             img.save(buf, format="PNG")
             size_mb = len(buf.getvalue()) / (1024 * 1024)
             if size_mb > 18:
-                print(f"⚠ Page {page_num + 1} rendered to {size_mb:.1f} MB — approaching OpenAI cap. "
-                      f"Consider lowering _RENDER_DPI.")
+                log.warning(
+                    "PDF page %d rendered to %.1f MB — approaching OpenAI cap. "
+                    "Consider lowering _RENDER_DPI.",
+                    page_num + 1, size_mb,
+                )
             images.append(img)
+    finally:
         doc.close()
-    except Exception as e:
-        print(f"Error processing PDF: {e}")
-        raise
     return images
 
 
@@ -66,41 +55,39 @@ def pil_to_base64(image: Image.Image) -> str:
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
-def run_specialist_agent(images: list, drawing_type: str) -> str:
-    """Route drawing images to the correct specialist prompt and call gpt-4o.
+def run_specialist_agent(base64_images: list[str], drawing_type: str) -> str:
+    """Route base64 drawing images to the correct specialist prompt and call the vision model.
 
     Args:
-        images: List of PIL Image objects (one per PDF page).
+        base64_images: pre-encoded PNG base64 strings (one per page).
         drawing_type: "foundation" | "slab" | "beam" | "column" | "unknown".
 
     Returns:
         Initial compliance report as a Markdown string.
     """
-    from prompt import PROMPT_REGISTRY, INITIAL_EXTRACTION_PROMPT
+    from prompt import INITIAL_EXTRACTION_PROMPT, PROMPT_REGISTRY
 
     prompt = PROMPT_REGISTRY.get(drawing_type, INITIAL_EXTRACTION_PROMPT)
     if drawing_type == "unknown":
-        print("⚠ Unknown drawing type — falling back to foundation prompt.")
+        log.warning("Unknown drawing type — falling back to foundation prompt.")
 
-    print(f"🏗 Specialist agent running for: {drawing_type}")
+    log.info("Specialist agent running for: %s", drawing_type)
 
     image_content = [
         {
             "type": "image_url",
             "image_url": {
-                "url": f"data:image/png;base64,{pil_to_base64(img)}",
-                "detail": "high",   # tile-based: reads fine annotations
+                "url": f"data:image/png;base64,{img}",
+                "detail": "high",  # tile-based: reads fine annotations
             },
         }
-        for img in images
+        for img in base64_images
     ]
 
-    response = client.chat.completions.create(
+    response = get_openai_client().chat.completions.create(
         model=VISION_MODEL,
         messages=[
             {
-                # System message: prevents the "I'm unable to analyze images" preamble
-                # that gpt-4o sometimes emits when it hasn't processed image tokens yet.
                 "role": "system",
                 "content": (
                     "You are a Senior Indian Civil Engineer and RCC drawing compliance expert. "

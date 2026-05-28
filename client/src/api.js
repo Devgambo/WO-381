@@ -1,53 +1,54 @@
-const API_BASE = "http://localhost:8000";
+const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
 function authHeaders(token) {
   if (!token) return {};
   return { Authorization: `Bearer ${token}` };
 }
 
-export async function loginUser(email, password) {
-  const res = await fetch(`${API_BASE}/api/auth/login`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Login failed");
-  }
+async function readErr(res, fallback) {
+  const err = await res.json().catch(() => ({ detail: res.statusText }));
+  return err.detail || fallback;
+}
+
+async function jsonFetch(url, opts = {}, fallback = "Request failed") {
+  const res = await fetch(url, opts);
+  if (!res.ok) throw new Error(await readErr(res, fallback));
   return res.json();
 }
 
-export async function signupUser(email, password) {
-  const res = await fetch(`${API_BASE}/api/auth/signup`, {
+export async function loginUser(email, password) {
+  return jsonFetch(`${API_BASE}/api/auth/login`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Signup failed");
-  }
-  return res.json();
+  }, "Login failed");
+}
+
+export async function signupUser(email, password) {
+  return jsonFetch(`${API_BASE}/api/auth/signup`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  }, "Signup failed");
+}
+
+export async function logoutUser(token) {
+  if (!token) return null;
+  return jsonFetch(`${API_BASE}/api/auth/logout`, {
+    method: "POST",
+    headers: authHeaders(token),
+  }, "Logout failed").catch(() => null);
 }
 
 export async function generateInitialReport(files, token) {
   const formData = new FormData();
-  files.forEach((file) => {
-    formData.append("files", file);
-  });
+  files.forEach((file) => formData.append("files", file));
 
-  const res = await fetch(`${API_BASE}/api/generate-initial-report`, {
+  return jsonFetch(`${API_BASE}/api/generate-initial-report`, {
     method: "POST",
     headers: authHeaders(token),
     body: formData,
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Failed to generate initial report");
-  }
-  return res.json();
+  }, "Failed to generate initial report");
 }
 
 export async function generateFinalReport(initialReport, userInput, drawingType, reportId, token, assumedValues = {}) {
@@ -60,98 +61,67 @@ export async function generateFinalReport(initialReport, userInput, drawingType,
     formData.append("assumed_values", JSON.stringify(assumedValues));
   }
 
-  const res = await fetch(`${API_BASE}/api/generate-final-report`, {
+  return jsonFetch(`${API_BASE}/api/generate-final-report`, {
     method: "POST",
     headers: authHeaders(token),
     body: formData,
-  });
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Failed to generate final report");
-  }
-  return res.json();
+  }, "Failed to generate final report");
 }
 
 export async function validateInput(missingFields, userAnswers, token) {
-  const res = await fetch(`${API_BASE}/api/validate-input`, {
+  return jsonFetch(`${API_BASE}/api/validate-input`, {
     method: "POST",
-    headers: {
-      ...authHeaders(token),
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      missing_fields: missingFields,
-      user_answers: userAnswers,
-    }),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Validation failed");
-  }
-  return res.json();
+    headers: { ...authHeaders(token), "Content-Type": "application/json" },
+    body: JSON.stringify({ missing_fields: missingFields, user_answers: userAnswers }),
+  }, "Validation failed");
 }
 
-export async function queryRag(q, k = 5, contentType = null) {
+export async function queryRag(q, token, k = 5, contentType = null) {
   const params = new URLSearchParams({ q, k: String(k) });
   if (contentType) params.append("content_type", contentType);
 
-  const res = await fetch(`${API_BASE}/api/rag/query?${params.toString()}`);
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "RAG query failed");
-  }
-  return res.json();
+  return jsonFetch(`${API_BASE}/api/rag/query?${params.toString()}`, {
+    headers: authHeaders(token),
+  }, "RAG query failed");
 }
 
 export async function fetchReports(token) {
-  const res = await fetch(`${API_BASE}/api/reports`, {
+  return jsonFetch(`${API_BASE}/api/reports`, {
     headers: authHeaders(token),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Failed to fetch reports");
-  }
-  return res.json();
+  }, "Failed to fetch reports");
 }
 
 export async function deleteReport(reportId, token) {
-  const res = await fetch(`${API_BASE}/api/reports/${reportId}`, {
+  return jsonFetch(`${API_BASE}/api/reports/${reportId}`, {
     method: "DELETE",
     headers: authHeaders(token),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Failed to delete report");
-  }
-  return res.json();
+  }, "Failed to delete report");
 }
 
 export async function fetchReportById(reportId, token) {
-  const res = await fetch(`${API_BASE}/api/reports/${reportId}`, {
+  return jsonFetch(`${API_BASE}/api/reports/${reportId}`, {
     headers: authHeaders(token),
-  });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "Failed to fetch report");
-  }
-  return res.json();
+  }, "Failed to fetch report");
 }
 
-export async function downloadPdf(markdownContent, filename = "compliance_report") {
+export async function fetchReportMissingFields(reportId, token) {
+  return jsonFetch(`${API_BASE}/api/reports/${reportId}/missing-fields`, {
+    headers: authHeaders(token),
+  }, "Failed to derive missing fields");
+}
+
+export async function downloadPdf(markdownContent, filename = "compliance_report", token) {
   const formData = new FormData();
   formData.append("markdown_content", markdownContent);
   formData.append("filename", filename);
 
   const res = await fetch(`${API_BASE}/api/download-pdf`, {
     method: "POST",
+    headers: authHeaders(token),
     body: formData,
   });
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || "PDF download failed");
-  }
+  if (!res.ok) throw new Error(await readErr(res, "PDF download failed"));
 
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);

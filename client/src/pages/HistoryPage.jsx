@@ -15,27 +15,31 @@ export default function HistoryPage() {
     const [deletingId, setDeletingId] = useState(null);
 
     useEffect(() => {
-        loadReports();
-    }, []);
-
-    const loadReports = async () => {
-        setLoading(true);
-        setError(null);
-        try {
-            const data = await fetchReports(token);
-            setReports(data.reports || []);
-        } catch (err) {
-            setError(err.message);
-        } finally {
-            setLoading(false);
-        }
-    };
+        const load = async () => {
+            setLoading(true);
+            setError(null);
+            try {
+                const data = await fetchReports(token);
+                setReports(data.reports || []);
+            } catch (err) {
+                setError(err.message);
+            } finally {
+                setLoading(false);
+            }
+        };
+        load();
+    }, [token]);
 
     const handleDownload = async (report, type) => {
         const content = type === "initial" ? report.initial_report : report.final_report;
         if (!content) return;
-        const filename = `${type}_report_${report.session_name.replace(/[^a-zA-Z0-9]/g, "_")}`;
-        await downloadPdf(content, filename);
+        const safeSession = (report.session_name || "report").replace(/[^a-zA-Z0-9]/g, "_");
+        const filename = `${type}_report_${safeSession}`;
+        try {
+            await downloadPdf(content, filename, token);
+        } catch (err) {
+            setError(err.message);
+        }
     };
 
     const handleDelete = async (reportId) => {
@@ -58,7 +62,10 @@ export default function HistoryPage() {
     };
 
     const formatDate = (dateStr) => {
-        return new Date(dateStr).toLocaleDateString("en-US", {
+        if (!dateStr) return "—";
+        const d = new Date(dateStr);
+        if (Number.isNaN(d.getTime())) return "—";
+        return d.toLocaleDateString("en-US", {
             year: "numeric",
             month: "short",
             day: "numeric",
@@ -79,7 +86,7 @@ export default function HistoryPage() {
                         ← Back to History
                     </button>
                     <h2 className="text-lg font-bold text-[var(--color-text-primary)]">
-                        {selectedReport.session_name}
+                        {selectedReport.session_name || "Untitled report"}
                     </h2>
                 </div>
 
@@ -168,7 +175,7 @@ export default function HistoryPage() {
                                         className="font-semibold text-[var(--color-text-primary)] text-sm truncate cursor-pointer hover:text-[var(--color-accent-light)] transition-colors"
                                         onClick={() => { setSelectedReport(report); setViewType(report.initial_report ? "initial" : "final"); }}
                                     >
-                                        📄 {report.session_name}
+                                        📄 {report.session_name || "Untitled report"}
                                     </h3>
                                     <p className="text-xs text-[var(--color-text-muted)] mt-1">{formatDate(report.created_at)}</p>
                                     <div className="flex gap-2 mt-2">

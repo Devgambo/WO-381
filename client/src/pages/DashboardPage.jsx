@@ -1,9 +1,14 @@
-import { useState, useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import FileUpload from "../components/FileUpload";
 import ReportDisplay from "../components/ReportDisplay";
 import UserInputForm from "../components/UserInputForm";
-import { generateInitialReport, generateFinalReport, validateInput } from "../api";
+import {
+    fetchReportMissingFields,
+    generateFinalReport,
+    generateInitialReport,
+    validateInput,
+} from "../api";
 import { useAuth } from "../context/AuthContext";
 
 const STEPS = [
@@ -17,8 +22,11 @@ const DRAWING_TYPE_LABELS = {
     foundation: { emoji: "🏗️", label: "Foundation", color: "#22c55e" },
     slab: { emoji: "🧱", label: "Slab", color: "#3b82f6" },
     beam: { emoji: "📐", label: "Beam", color: "#f59e0b" },
+    column: { emoji: "🏛️", label: "Column", color: "#a855f7" },
     unknown: { emoji: "❓", label: "Unknown", color: "#6b7280" },
 };
+
+const ASSUME_RE = /\b(assume|assume yourself|use standard|use default|use typical|any value|as per IS code|standard value|you decide|pick one|common value)\b/i;
 
 export default function DashboardPage() {
     const { token } = useAuth();
@@ -39,166 +47,36 @@ export default function DashboardPage() {
     const [validating, setValidating] = useState(false);
     const [reportTimestamp, setReportTimestamp] = useState(null);
 
-    // Resume from history: pre-fill state if navigated with resumeReport
+    // Resume from history: pre-fill state and fetch missing fields from the API.
     useEffect(() => {
         const resumeData = location.state?.resumeReport;
-        if (resumeData) {
-            setInitialReport(resumeData.initial_report);
-            setReportId(resumeData.id);
-            setDrawingType(resumeData.drawing_type || "unknown");
+        if (!resumeData) return;
 
-            // Re-extract missing fields from the initial report
-            const fields = extractMissingFieldsClient(resumeData.initial_report);
-            setMissingFields(fields);
-            const answers = {};
-            fields.forEach((f) => { answers[f] = ""; });
-            setMissingAnswers(answers);
-            setStep(3);
+        setInitialReport(resumeData.initial_report);
+        setReportId(resumeData.id);
+        setDrawingType(resumeData.drawing_type || "unknown");
+        setStep(3);
 
-            // Clear the navigation state so refresh doesn't re-trigger
-            navigate(location.pathname, { replace: true, state: {} });
-        }
-    }, []);
-
-    // Client-side missing field extractor (mirrors backend dual-extraction logic)
-    function extractMissingFieldsClient(report) {
-        if (!report) return [];
-        const lines = report.split("\n");
-        const missingFromTable = [];
-        const missingFromStep5 = [];
-        const FLAG_STATUSES = new Set(["missing information", "cannot verify", "non-compliant"]);
-
-        // ── 1. Extract from the compliance table ──────────────────
-        for (const line of lines) {
-            const stripped = line.trim();
-            if (!stripped.startsWith("|")) continue;
-            let cells = stripped.split("|").map(c => c.trim()).filter(c => c);
-            if (cells.length < 4) continue;
-            const statusCell = cells[cells.length - 1].replace(/\*\*/g, "").trim();
-            if (FLAG_STATUSES.has(statusCell.toLowerCase())) {
-                // The criteria name is in cells[0] OR cells[1] if cells[0] is just a row number (#)
-                let criteriaIdx = 0;
-                if (/^\d+$/.test(cells[0].replace(/\*\*/g, "").trim()) && cells.length >= 5) {
-                    criteriaIdx = 1;
-                }
-                let criteria = cells[criteriaIdx].replace(/\*\*/g, "").trim();
-                criteria = criteria.replace(/^\d+\.\s*/, "").trim();
-                if (criteria && !/^\d+$/.test(criteria) && !["criteria", "criterion", "check", "none", "n/a", "nil", "---", "#"].includes(criteria.toLowerCase())) {
-                    missingFromTable.push(criteria);
-                }
+        (async () => {
+            try {
+                const { missing_fields } = await fetchReportMissingFields(resumeData.id, token);
+                setMissingFields(missing_fields || []);
+                const answers = {};
+                (missing_fields || []).forEach((f) => { answers[f] = ""; });
+                setMissingAnswers(answers);
+            } catch (err) {
+                setError(err.message);
             }
-        }
+        })();
 
-        // ── 2. Extract from Step 5 section ────────────────────────
-        let inSection = false;
-        const categoryKeywords = new Set([
-            "missing information", "cannot verify", "non-compliant",
-            "missing", "wrong", "document type", "not applicable",
-        ]);
-        for (const line of lines) {
-            const stripped = line.trim();
-            // Detect section header — 'Step 5', 'Phase 4', '4.1', or 'missing...wrong/information'
-            if (stripped.startsWith("#") && /(step\s*5|phase\s*4|4\.1\b|missing.*(?:wrong|information|unverifiable))/i.test(stripped)) {
-                inSection = true;
-                continue;
-            }
-            // Stop at 4.2, 4.3, summary, quality headings — mirror backend logic
-            if (inSection && stripped.startsWith("#")) {
-                if (/(4\.2\b|4\.3\b|summary|quality|severity)/i.test(stripped)) break;
-                // Stop at heading level ≤ 3 (### or higher) that isn't a sub-heading of 4.1
-                const headingLevel = stripped.length - stripped.replace(/^#+/, "").length;
-                if (headingLevel <= 3) break;
-            }
-            if (!inSection || !stripped || stripped.startsWith("|") || /^---+$|^===+$|^\*\*\*+$/.test(stripped)) continue;
-
-            let clean = stripped.replace(/^\d+\.\s*|^[-*+]\s*/, "").trim();
-            clean = clean.replace(/\*\*/g, "");
-            if (!clean || ["none", "n/a", "nil"].includes(clean.toLowerCase())) continue;
-
-            if (clean.includes(":")) {
-                const colonIdx = clean.indexOf(":");
-                const prefix = clean.slice(0, colonIdx).trim();
-                const detail = clean.slice(colonIdx + 1).trim();
-
-                if (categoryKeywords.has(prefix.toLowerCase())) {
-                    if (detail) {
-                        const items = detail.split(/,\s*(?![^()]*\))/);
-                        for (let item of items) {
-                            item = item.trim().replace(/\.$/, "");
-                            item = item.replace(/due to lack of explicit data/i, "").trim();
-                            item = item.replace(/\s*\(.*?\)\s*$/, "").trim();
-                            // Strip "and " prefix from split artifacts
-                            if (item.toLowerCase().startsWith("and ")) {
-                                item = item.slice(4).trim();
-                            }
-                            // Skip non-fillable items about NOTES sections
-                            if (/notes?\s*section|no\s+dedicated/i.test(item)) continue;
-                            if (item && !["none", "n/a", "nil"].includes(item.toLowerCase())) {
-                                missingFromStep5.push(item);
-                            }
-                        }
-                    }
-                } else {
-                    if (!/notes?\s*section|no\s+dedicated/i.test(prefix)) {
-                        missingFromStep5.push(prefix);
-                    }
-                }
-            } else {
-                if (!/notes?\s*section|no\s+dedicated/i.test(clean)) {
-                    missingFromStep5.push(clean);
-                }
-            }
-        }
-
-        // ── 2b. Check Step 0 for missing site location ────────────
-        const locationAlreadyListed = [...missingFromStep5, ...missingFromTable].some(
-            (item) => item.toLowerCase().includes("location")
-        );
-        if (!locationAlreadyListed) {
-            for (const line of lines) {
-                const stripped = line.trim();
-                if (/0\.2/.test(stripped) && /missing|not\s+(mentioned|found|specified|provided|available)/i.test(stripped)) {
-                    if (/(site\s*)?location/i.test(stripped)) {
-                        missingFromStep5.push("Site Location");
-                        break;
-                    }
-                }
-            }
-        }
-
-        // ── 3. Merge & deduplicate ────────────────────────────────
-        const normalise = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
-        const seen = new Set();
-        const merged = [];
-
-        for (const item of missingFromStep5) {
-            const key = normalise(item);
-            if (key && !seen.has(key)) {
-                seen.add(key);
-                merged.push(item);
-            }
-        }
-        for (const item of missingFromTable) {
-            const key = normalise(item);
-            if (key && !seen.has(key)) {
-                let alreadyCovered = false;
-                for (const existingKey of seen) {
-                    if (key.includes(existingKey) || existingKey.includes(key)) {
-                        alreadyCovered = true;
-                        break;
-                    }
-                }
-                if (!alreadyCovered) {
-                    seen.add(key);
-                    merged.push(item);
-                }
-            }
-        }
-        return merged;
-    }
+        navigate(location.pathname, { replace: true, state: {} });
+    }, [location.pathname, location.state, navigate, token]);
 
     const handleGenerateInitial = async () => {
-        if (files.length === 0) return setError("Please upload at least one file.");
+        if (files.length === 0) {
+            setError("Please upload at least one file.");
+            return;
+        }
         setLoading(true);
         setError(null);
         try {
@@ -208,7 +86,6 @@ export default function DashboardPage() {
             setDrawingType(data.drawing_type || "unknown");
             setMissingFields(data.missing_fields || []);
             setReportTimestamp(Date.now());
-            // Pre-fill answer slots
             const answers = {};
             (data.missing_fields || []).forEach((f) => { answers[f] = ""; });
             setMissingAnswers(answers);
@@ -221,7 +98,6 @@ export default function DashboardPage() {
     };
 
     const handleValidateAndProceed = async () => {
-        // If there are no missing fields, go straight to final
         if (missingFields.length === 0) {
             handleGenerateFinal();
             return;
@@ -232,13 +108,11 @@ export default function DashboardPage() {
         try {
             const result = await validateInput(missingFields, missingAnswers, token);
             if (result.valid) {
-                // Build user input string from answers, replacing "assume" entries
-                // with the actual assumed value returned by the validator.
                 const assumed = result.assumed_values || {};
                 const inputText = Object.entries(missingAnswers)
                     .filter(([, v]) => v.trim())
                     .map(([k, v]) => {
-                        const isAssume = /assume|use standard|use default|use typical|you decide/i.test(v);
+                        const isAssume = ASSUME_RE.test(v);
                         return isAssume && assumed[k]
                             ? `${k}: ${assumed[k]}`
                             : `${k}: ${v}`;
@@ -259,14 +133,19 @@ export default function DashboardPage() {
 
     const handleGenerateFinal = async (overrideInput, overrideAssumed = {}) => {
         const input = overrideInput || userInput;
-        if (!input.trim())
-            return setError("Please provide additional information before generating the final report.");
+        if (!input.trim()) {
+            setError("Please provide additional information before generating the final report.");
+            return;
+        }
         setLoading(true);
         setError(null);
         try {
             const data = await generateFinalReport(initialReport, input, drawingType, reportId, token, overrideAssumed);
             setFinalReport(data.report);
             setStep(4);
+            if (data.rag_context_used === false) {
+                setError("Final report generated without IS-code context — verdicts may be incomplete.");
+            }
         } catch (err) {
             setError(err.message);
         } finally {
@@ -300,18 +179,16 @@ export default function DashboardPage() {
 
     return (
         <>
-            {/* Header */}
             <header className="mb-8">
                 <h1 className="text-[1.85rem] font-extrabold tracking-tight bg-gradient-to-br from-[var(--color-text-primary)] to-[var(--color-accent-light)] bg-clip-text text-transparent flex items-center gap-2">
                     <span className="text-[1.6rem]">🧑‍🔬</span>
                     RCC Structural Compliance Check
                 </h1>
                 <p className="text-[0.95rem] text-[var(--color-text-secondary)] mt-1">
-                    Analyze structural drawings (Foundations, Slabs, Beams) for compliance with IS 456:2000 and SP 34
+                    Analyze structural drawings (Foundations, Slabs, Beams, Columns) for compliance with IS 456:2000 and SP 34
                 </p>
             </header>
 
-            {/* Stepper */}
             <div className="flex gap-2 mb-8 flex-wrap">
                 {STEPS.map(({ num, label }) => (
                     <button
@@ -338,7 +215,6 @@ export default function DashboardPage() {
                 ))}
             </div>
 
-            {/* Error */}
             {error && (
                 <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-300 text-sm mb-6 animate-fade-up">
                     <span>❌</span> {error}
@@ -346,7 +222,6 @@ export default function DashboardPage() {
                 </div>
             )}
 
-            {/* Loading */}
             {loading && (
                 <div className="flex flex-col items-center gap-4 py-12 text-center">
                     <div className="w-10 h-10 border-3 border-[var(--color-border-subtle)] border-t-[var(--color-accent)] rounded-full animate-spin-slow" />
@@ -354,7 +229,6 @@ export default function DashboardPage() {
                 </div>
             )}
 
-            {/* Step 1 */}
             {step === 1 && (
                 <section className="bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] rounded-xl p-8 backdrop-blur-md animate-fade-up">
                     <h2 className="text-lg font-bold mb-5">📄 Step 1 — Upload PDF or Image</h2>
@@ -369,7 +243,6 @@ export default function DashboardPage() {
                 </section>
             )}
 
-            {/* Step 2 */}
             {step === 2 && initialReport && (
                 <section className="bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] rounded-xl p-8 backdrop-blur-md animate-fade-up">
                     <div className="flex items-center gap-3 mb-5">
@@ -387,7 +260,7 @@ export default function DashboardPage() {
                             </span>
                         )}
                     </div>
-                    <ReportDisplay report={initialReport} title="Initial Report" filenamePrefix={`${drawingType || "unknown"}_init${reportTimestamp || Date.now()}`} />
+                    <ReportDisplay report={initialReport} title="Initial Report" filenamePrefix={`${drawingType || "unknown"}_init_${reportTimestamp || ""}`} />
                     <button
                         onClick={() => setStep(3)}
                         className="mt-5 inline-flex items-center gap-1.5 px-6 py-2.5 font-semibold text-sm text-white rounded-lg bg-gradient-to-br from-[var(--color-accent)] to-purple-600 shadow-[0_4px_14px_var(--color-accent-glow)] hover:shadow-[0_6px_22px_var(--color-accent-glow)] hover:-translate-y-0.5 transition-all cursor-pointer"
@@ -397,7 +270,6 @@ export default function DashboardPage() {
                 </section>
             )}
 
-            {/* Step 3 — Missing Data & Validation */}
             {step === 3 && (
                 <section className="bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] rounded-xl p-8 backdrop-blur-md animate-fade-up">
                     <h2 className="text-lg font-bold mb-5">✏️ Step 3 — Provide Missing Information</h2>
@@ -425,11 +297,10 @@ export default function DashboardPage() {
                                                     }))
                                                 }
                                                 placeholder={`Enter ${field}`}
-                                                className={`w-full px-4 py-2.5 text-sm text-[var(--color-text-primary)] bg-[var(--color-bg-glass)] border rounded-lg focus:outline-none focus:shadow-[0_0_0_3px_var(--color-accent-glow)] transition-all font-[inherit] ${
-                                                    fieldError
-                                                        ? "border-red-500 focus:border-red-500"
-                                                        : "border-[var(--color-border-subtle)] focus:border-[var(--color-accent)]"
-                                                }`}
+                                                className={`w-full px-4 py-2.5 text-sm text-[var(--color-text-primary)] bg-[var(--color-bg-glass)] border rounded-lg focus:outline-none focus:shadow-[0_0_0_3px_var(--color-accent-glow)] transition-all font-[inherit] ${fieldError
+                                                    ? "border-red-500 focus:border-red-500"
+                                                    : "border-[var(--color-border-subtle)] focus:border-[var(--color-accent)]"
+                                                    }`}
                                             />
                                             {fieldError && (
                                                 <p className="text-xs text-red-400 mt-1">
@@ -463,7 +334,6 @@ export default function DashboardPage() {
                 </section>
             )}
 
-            {/* Step 4 */}
             {step === 4 && finalReport && (
                 <section className="bg-[var(--color-bg-card)] border border-[var(--color-border-subtle)] rounded-xl p-8 backdrop-blur-md animate-fade-up">
                     <div className="flex items-center gap-3 mb-5">
@@ -481,11 +351,10 @@ export default function DashboardPage() {
                             </span>
                         )}
                     </div>
-                    <ReportDisplay report={finalReport} title="Final Report" filenamePrefix={`${drawingType || "unknown"}_final${reportTimestamp || Date.now()}`} />
+                    <ReportDisplay report={finalReport} title="Final Report" filenamePrefix={`${drawingType || "unknown"}_final_${reportTimestamp || ""}`} />
                 </section>
             )}
 
-            {/* Reset */}
             {(initialReport || finalReport) && (
                 <button
                     onClick={handleReset}

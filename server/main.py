@@ -1,24 +1,29 @@
+import io
+import logging
 import os
 import re
-import io
 from typing import Optional
+
+from dotenv import load_dotenv
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from PIL import Image
 from pydantic import BaseModel
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from dotenv import load_dotenv
-from auth import router as auth_router, get_current_user
+from auth import get_current_user, router as auth_router
 from database import get_supabase_admin_client
-from PIL import Image
 
-# Load environment variables
 load_dotenv()
+
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(name)s :: %(message)s",
+)
+log = logging.getLogger("compliance")
 
 
 # --- Lazy-loaded services (heavy imports) ---
 _vectordb = None
-_embedding_model = None
 
 
 def get_vectordb():
@@ -30,46 +35,65 @@ def get_vectordb():
 
 
 def get_embedding_model():
-    global _embedding_model
-    if _embedding_model is None:
-        from embedding_service import embedding_model
-        _embedding_model = embedding_model
-    return _embedding_model
+    from embedding_service import get_embedding_model as _factory
+    return _factory()
 
+
+# --- Limits ---
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))  # 50 MB default
+MAX_RAG_RESULTS = 20
+MAX_SESSION_NAME_LEN = 200
+ALLOWED_IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
+ALLOWED_PDF_EXTS = {".pdf"}
 
 # --- FastAPI App ---
 app = FastAPI(
     title="Structural Compliance Checker",
-    description="AI-powered multi-agent RCC structural drawing compliance analysis (Foundations, Slabs, Beams)",
+    description="AI-powered multi-agent RCC structural drawing compliance analysis",
     version="2.0.0",
 )
 
+_origins_env = os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:5173,http://localhost:3000")
+_allow_origins = [o.strip() for o in _origins_env.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allow_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
 )
 
 app.include_router(auth_router)
 
-# ---------- PDF-to-Markdown helper ----------
-def markdown_to_pdf(markdown_text: str, output_path: str):
-    """
-    Converts markdown text to PDF using reportlab.
-    Returns (success: bool, error_message: str or None)
-    """
+
+def _safe_filename(name: str, default: str = "report") -> str:
+    """Strip header-injection chars; keep alphanumerics, underscore, dash, dot."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", (name or "").strip())
+    cleaned = cleaned.lstrip(".") or default
+    return cleaned[:100]
+
+
+# ---------- PDF generator ----------
+def markdown_to_pdf(markdown_text: str, output) -> tuple[bool, Optional[str]]:
+    """Render markdown to a PDF written to `output` (path or file-like)."""
     try:
-        from reportlab.lib.pagesizes import letter
-        from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.units import inch
-        from reportlab.lib import colors
         import html as html_mod
 
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import letter
+        from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+        from reportlab.lib.units import inch
+        from reportlab.platypus import (
+            Paragraph,
+            SimpleDocTemplate,
+            Spacer,
+            Table,
+            TableStyle,
+        )
+
         doc = SimpleDocTemplate(
-            output_path, pagesize=letter,
+            output, pagesize=letter,
             rightMargin=72, leftMargin=72,
             topMargin=72, bottomMargin=18,
         )
@@ -93,7 +117,6 @@ def markdown_to_pdf(markdown_text: str, output_path: str):
             return text
 
         def parse_table(lines, start_idx):
-            table_data = []
             i = start_idx
             if i >= len(lines) or not lines[i].strip().startswith("|"):
                 return None, start_idx
@@ -104,6 +127,7 @@ def markdown_to_pdf(markdown_text: str, output_path: str):
             i += 1
             if i < len(lines) and re.match(r'^\|[\s\-:]+$', lines[i].strip()):
                 i += 1
+            table_data = []
             while i < len(lines):
                 row_line = lines[i].strip()
                 if not row_line.startswith("|"):
@@ -121,15 +145,19 @@ def markdown_to_pdf(markdown_text: str, output_path: str):
         in_list = False
         list_items = []
 
+        def flush_list():
+            nonlocal in_list, list_items
+            if in_list and list_items:
+                for item in list_items:
+                    story.append(Paragraph(f"• {convert_inline(item)}", normal_style))
+            list_items = []
+            in_list = False
+
         while i < len(lines):
             line = lines[i].rstrip()
 
             if not line.strip():
-                if in_list and list_items:
-                    for item in list_items:
-                        story.append(Paragraph(f"• {convert_inline(item)}", normal_style))
-                    list_items = []
-                    in_list = False
+                flush_list()
                 story.append(Spacer(1, 0.1 * inch))
                 i += 1
                 continue
@@ -157,10 +185,7 @@ def markdown_to_pdf(markdown_text: str, output_path: str):
                     continue
 
             if line.startswith("#"):
-                if in_list and list_items:
-                    for item in list_items:
-                        story.append(Paragraph(f"• {convert_inline(item)}", normal_style))
-                    list_items, in_list = [], False
+                flush_list()
                 if line.startswith("###"):
                     story.append(Paragraph(convert_inline(line[3:].strip()), h3_style))
                 elif line.startswith("##"):
@@ -182,200 +207,148 @@ def markdown_to_pdf(markdown_text: str, output_path: str):
                 continue
 
             if re.match(r'^\d+\.\s+', line):
-                if in_list and list_items:
-                    for item in list_items:
-                        story.append(Paragraph(f"• {convert_inline(item)}", normal_style))
-                    list_items, in_list = [], False
+                flush_list()
                 story.append(Paragraph(convert_inline(re.sub(r'^\d+\.\s+', '', line)), normal_style))
                 i += 1
                 continue
 
-            if in_list and list_items:
-                for item in list_items:
-                    story.append(Paragraph(f"• {convert_inline(item)}", normal_style))
-                list_items, in_list = [], False
-
+            flush_list()
             story.append(Paragraph(convert_inline(line), normal_style))
             i += 1
 
-        if in_list and list_items:
-            for item in list_items:
-                story.append(Paragraph(f"• {convert_inline(item)}", normal_style))
-
+        flush_list()
         doc.build(story)
         return True, None
     except Exception as e:
-        return False, f"PDF conversion failed: {str(e)}"
+        log.exception("PDF conversion failed")
+        return False, f"PDF conversion failed: {e}"
 
 
-#--------- missing field extractor----------
+# ---------- Missing-field extractor ----------
+_FLAG_STATUSES = {'missing information', 'cannot verify', 'non-compliant'}
+_CATEGORY_HEADINGS = {
+    'missing information', 'cannot verify', 'non-compliant',
+    'wrong information', 'document type', 'not applicable',
+}
+_SKIP_LABELS = {'criteria', 'criterion', 'check', 'none', 'n/a', 'nil', '---', '#'}
+
+
+def _normalise(s: str) -> str:
+    return re.sub(r'[^a-z0-9]', '', s.lower())
+
+
 def _extract_missing_fields(report: str) -> list[str]:
-    """Extract missing/non-compliant fields from both the compliance table AND Step 5.
-    
-    Uses a dual-extraction approach:
-      1. Scan the compliance table (Step 2 & 3) for rows whose Status column
-         contains 'Missing Information', 'Cannot Verify', or 'Non-Compliant'.
-      2. Parse the 'Step 5: Report Missing or Wrong Information' section.
-      3. Merge both sets, deduplicating by normalised name.
-    """
-    missing_from_table = []
-    missing_from_step5 = []
+    """Extract missing/non-compliant fields from compliance table + Phase-4 / Step-5 section."""
+    missing_from_table: list[str] = []
+    missing_from_step5: list[str] = []
 
-    # ── 1. Extract from the compliance table ──────────────────────
-    FLAG_STATUSES = {'missing information', 'cannot verify', 'non-compliant'}
-    for line in report.splitlines():
-        stripped = line.strip()
-        # Table rows look like: | **1. Grade of Concrete** | ... | ... | Missing Information |
-        if not stripped.startswith('|'):
-            continue
-        cells = [c.strip() for c in stripped.split('|')]
-        # split('|') gives ['', cell1, cell2, ..., ''] for a well-formed row
-        cells = [c for c in cells if c]  # remove empties
-        if len(cells) < 4:
-            continue
-        # Skip the header / separator rows
-        status_cell = cells[-1].strip().replace('**', '').strip()
-        if status_cell.lower() in FLAG_STATUSES:
-            # The criteria name is in cells[0] OR cells[1] if cells[0] is just a row number (#)
-            criteria_idx = 0
-            if cells[0].replace('**', '').strip().isdigit() and len(cells) >= 5:
-                criteria_idx = 1
-            criteria = cells[criteria_idx].strip().replace('**', '').strip()
-            # Strip leading number like "1. " or "12. "
-            criteria = re.sub(r'^\d+\.\s*', '', criteria).strip()
-            if criteria and not criteria.isdigit() and criteria.lower() not in ('criteria', 'criterion', 'check', 'none', 'n/a', 'nil', '---', '#'):
-                missing_from_table.append(criteria)
-
-    # ── 2. Extract from Step 5 / Phase 4 section ─────────────────
     in_section = False
+    location_seen = False
+
     for line in report.splitlines():
         stripped = line.strip()
-        # Detect the section header — supports BOTH old format (Step 5: Report
-        # Missing or Wrong Information) and new format (Phase 4 / 4.1 Report
-        # of Missing / Wrong / Unverifiable Items)
-        if stripped.startswith('#') and re.search(
-            r'(step\s*5|phase\s*4|4\.1\b|missing.*(?:wrong|information|unverifiable))',
-            stripped, re.IGNORECASE
+        if not stripped:
+            continue
+
+        # Table row scan
+        if stripped.startswith('|'):
+            cells = [c.strip() for c in stripped.split('|') if c.strip()]
+            if len(cells) >= 4:
+                status_cell = cells[-1].replace('**', '').strip().lower()
+                if status_cell in _FLAG_STATUSES:
+                    criteria_idx = 0
+                    if cells[0].replace('**', '').strip().isdigit() and len(cells) >= 5:
+                        criteria_idx = 1
+                    criteria = re.sub(r'^\d+\.\s*', '', cells[criteria_idx].replace('**', '').strip()).strip()
+                    if criteria and not criteria.isdigit() and criteria.lower() not in _SKIP_LABELS:
+                        missing_from_table.append(criteria)
+                        if 'location' in criteria.lower():
+                            location_seen = True
+            continue
+
+        # Section header detection
+        if stripped.startswith('#'):
+            if re.search(
+                r'(step\s*5|phase\s*4|4\.1\b|missing.*(?:wrong|information|unverifiable))',
+                stripped, re.IGNORECASE,
+            ):
+                in_section = True
+                continue
+            if in_section:
+                if re.search(r'(4\.2\b|4\.3\b|summary|quality|severity)', stripped, re.IGNORECASE):
+                    in_section = False
+                    continue
+                heading_level = len(stripped) - len(stripped.lstrip('#'))
+                if heading_level <= 3:
+                    in_section = False
+                    continue
+
+        # Site location flag from Step 0
+        if not location_seen and re.search(r'0\.2', stripped) and re.search(
+            r'(?i)missing|not\s+(mentioned|found|specified|provided|available)', stripped,
         ):
-            in_section = True
+            if re.search(r'(?i)(site\s*)?location', stripped):
+                missing_from_step5.append('Site Location')
+                location_seen = True
+                continue
+
+        if not in_section or stripped.startswith('|') or re.match(r'^---+$|^===+$|^\*\*\*+$', stripped):
             continue
-        # Stop at next heading or Summary section (but skip sub-headings like 4.2)
-        if in_section and stripped.startswith('#'):
-            # Allow #### 4.1 sub-headings within Phase 4, stop at ## or # or Phase 4.2/4.3
-            if re.search(r'(4\.2\b|4\.3\b|summary|quality|severity)', stripped, re.IGNORECASE):
-                break
-            # If it's a same-level or higher heading not about 4.1, stop
-            heading_level = len(stripped) - len(stripped.lstrip('#'))
-            if heading_level <= 3:  # ### or higher
-                break
-        if not in_section:
-            continue
-        # Skip empty, table, and separator lines
-        if not stripped or stripped.startswith('|') or re.match(r'^---+$|^===+$|^\*\*\*+$', stripped):
-            continue
-        # Remove list markers (1., 2., -, *)
-        clean = re.sub(r'^\d+\.\s*|^[-*+]\s*', '', stripped).strip()
-        # Strip markdown bold markers
-        clean = clean.replace('**', '')
+
+        clean = re.sub(r'^\d+\.\s*|^[-*+]\s*', '', stripped).replace('**', '').strip()
         if not clean or clean.lower() in ('none', 'n/a', 'nil'):
             continue
 
         if ':' in clean:
-            parts = clean.split(':', 1)
-            prefix = parts[0].strip()
-            detail = parts[1].strip() if len(parts) > 1 else ''
-
-            category_keywords = (
-                'missing information', 'cannot verify', 'non-compliant',
-                'missing', 'wrong', 'document type', 'not applicable',
-            )
-            if prefix.lower() in category_keywords:
-                if detail:
-                    # Handle comma-separated lists, ignoring commas inside parentheses
-                    items = [item.strip().rstrip('.') for item in re.split(r',\s*(?![^()]*\))', detail)]
-                    for item in items:
-                        item = re.sub(r'(?i)\s*due to lack of explicit data\s*', '', item).strip()
-                        # Remove parenthetical suffixes (e.g., "(M20 assumed for design, ...)") 
-                        item = re.sub(r'\s*\(.*?\)\s*$', '', item).strip()
-                        # Skip artifacts from splitting (e.g., "and specific ...")
-                        if item.lower().startswith('and '):
-                            item = item[4:].strip()
-                        # Skip non-fillable items like "No dedicated NOTES section ..."
-                        if re.search(r'(?i)notes?\s*section|no\s+dedicated', item):
-                            continue
-                        if item and item.lower() not in ('none', 'n/a', 'nil'):
-                            missing_from_step5.append(item)
+            prefix, _, detail = clean.partition(':')
+            prefix = prefix.strip()
+            detail = detail.strip()
+            if prefix.lower() in _CATEGORY_HEADINGS:
+                if not detail:
+                    continue
+                items = [item.strip().rstrip('.') for item in re.split(r',\s*(?![^()]*\))', detail)]
+                for item in items:
+                    item = re.sub(r'(?i)\s*due to lack of explicit data\s*', '', item).strip()
+                    item = re.sub(r'\s*\(.*?\)\s*$', '', item).strip()
+                    if item.lower().startswith('and '):
+                        item = item[4:].strip()
+                    if re.search(r'(?i)notes?\s*section|no\s+dedicated', item):
+                        continue
+                    if item and item.lower() not in ('none', 'n/a', 'nil'):
+                        missing_from_step5.append(item)
             else:
-                # The prefix itself is the field name (e.g., "Clear Cover: Missing")
-                # Skip non-fillable items
                 if not re.search(r'(?i)notes?\s*section|no\s+dedicated', prefix):
                     missing_from_step5.append(prefix)
         else:
-            # Skip non-fillable items
             if not re.search(r'(?i)notes?\s*section|no\s+dedicated', clean):
                 missing_from_step5.append(clean)
 
-    # ── 2b. Check Step 0 for missing site location ──────────────
-    location_already_listed = any(
-        'location' in item.lower() for item in missing_from_step5 + missing_from_table
-    )
-    if not location_already_listed:
-        for line in report.splitlines():
-            stripped = line.strip()
-            # Look for Step 0.2 lines that flag location as missing
-            if re.search(r'0\.2', stripped) and re.search(r'(?i)missing|not\s+(mentioned|found|specified|provided|available)', stripped):
-                if re.search(r'(?i)(site\s*)?location', stripped):
-                    missing_from_step5.append('Site Location')
-                    break
-
-    # ── 3. Merge & deduplicate ────────────────────────────────────
-    seen = set()
-    merged = []
-
-    def _normalise(s: str) -> str:
-        """Lowercase, strip punctuation/spaces for dedup comparison."""
-        return re.sub(r'[^a-z0-9]', '', s.lower())
-
-    # Step 5 items first (they tend to have better descriptions)
+    seen: set[str] = set()
+    merged: list[str] = []
     for item in missing_from_step5:
         key = _normalise(item)
         if key and key not in seen:
             seen.add(key)
             merged.append(item)
-
-    # Then table items (fill in anything Step 5 missed)
     for item in missing_from_table:
         key = _normalise(item)
-        if key and key not in seen:
-            # Also check if any existing key contains this one or vice versa
-            already_covered = False
-            for existing_key in seen:
-                if key in existing_key or existing_key in key:
-                    already_covered = True
-                    break
-            if not already_covered:
-                seen.add(key)
-                merged.append(item)
+        if not key or key in seen:
+            continue
+        if any(key in existing or existing in key for existing in seen):
+            continue
+        seen.add(key)
+        merged.append(item)
 
-    print("\n\n[Missing Fields] from table:", missing_from_table)
-    print("[Missing Fields] from step5:", missing_from_step5)
-    print("[Missing Fields] merged:", merged)
+    log.debug("Missing fields merged: %s", merged)
     return merged
 
 
 def _extract_quality_assessment(report: str) -> dict:
-    """Parse the '### Drawing Quality Assessment' block from the initial report.
-
-    Returns a dict with keys:
-        severity          : "ACCEPTABLE" | "REQUIRES_REVISION" | "REJECTED" | "UNKNOWN"
-        critical_defects  : int
-        rejection_narrative: str   # non-empty only when severity == REJECTED
-    """
+    """Parse the '### Drawing Quality Assessment' / Phase-4 block."""
     severity = "UNKNOWN"
     critical_defects = 0
     rejection_narrative = "N/A"
 
-    # Find the Drawing Quality Assessment / Summary of Compliance / Phase 4 section
     in_section = False
     in_summary_section = False
     narrative_lines: list[str] = []
@@ -384,12 +357,9 @@ def _extract_quality_assessment(report: str) -> dict:
     for line in report.splitlines():
         stripped = line.strip()
 
-        # Detect section header — supports both
-        # "Drawing Quality Assessment" (old+new) and "Summary of Compliance"
-        # and "Phase 4: Summary & Verdict"
         if stripped.startswith("#") and re.search(
             r"drawing\s+quality\s+assessment|summary.*compliance|phase\s*4",
-            stripped, re.IGNORECASE
+            stripped, re.IGNORECASE,
         ):
             if re.search(r"drawing\s+quality", stripped, re.IGNORECASE):
                 in_section = True
@@ -397,34 +367,26 @@ def _extract_quality_assessment(report: str) -> dict:
                 in_summary_section = True
             continue
 
-        # Stop at the next heading of equal or higher level
         if (in_section or in_summary_section) and stripped.startswith("#"):
-            # Allow sub-headings within the section (e.g., #### 4.2, #### 4.3)
             if re.search(r"drawing\s+quality\s+assessment", stripped, re.IGNORECASE):
                 in_section = True
                 in_summary_section = False
                 continue
             heading_level = len(stripped) - len(stripped.lstrip('#'))
-            if heading_level <= 3:  # ### or higher = new section
+            if heading_level <= 3:
                 break
 
         if not in_section and not in_summary_section:
             continue
 
-        # ── Severity ──────────────────────────────────────────────────────────
-        sev_match = re.search(
-            r"\*{0,2}severity\*{0,2}\s*:\s*([A-Z_]+)", stripped, re.IGNORECASE
-        )
+        sev_match = re.search(r"\*{0,2}severity\*{0,2}\s*:\s*([A-Z_]+)", stripped, re.IGNORECASE)
         if sev_match:
             raw_sev = sev_match.group(1).upper().strip()
             if raw_sev in {"ACCEPTABLE", "REQUIRES_REVISION", "REJECTED"}:
                 severity = raw_sev
             continue
 
-        # ── Overall Verdict (fallback severity from Summary of Compliance) ───
-        verdict_match = re.search(
-            r"\*{0,2}overall\s+verdict\*{0,2}\s*:\s*(.+)", stripped, re.IGNORECASE
-        )
+        verdict_match = re.search(r"\*{0,2}overall\s+verdict\*{0,2}\s*:\s*(.+)", stripped, re.IGNORECASE)
         if verdict_match and severity == "UNKNOWN":
             verdict_text = verdict_match.group(1).upper()
             if "FAIL" in verdict_text or "REJECT" in verdict_text:
@@ -435,10 +397,7 @@ def _extract_quality_assessment(report: str) -> dict:
                 severity = "ACCEPTABLE"
             continue
 
-        # ── Critical Defects Count ─────────────────────────────────────────────
-        defect_match = re.search(
-            r"critical\s+defects?\s+count\s*:\s*(\d+)", stripped, re.IGNORECASE
-        )
+        defect_match = re.search(r"critical\s+defects?\s+count\s*:\s*(\d+)", stripped, re.IGNORECASE)
         if defect_match:
             try:
                 critical_defects = int(defect_match.group(1))
@@ -446,13 +405,9 @@ def _extract_quality_assessment(report: str) -> dict:
                 pass
             continue
 
-        # ── Rejection Narrative ───────────────────────────────────────────────
-        narr_match = re.search(
-            r"\*{0,2}rejection\s+narrative\*{0,2}\s*:", stripped, re.IGNORECASE
-        )
+        narr_match = re.search(r"\*{0,2}rejection\s+narrative\*{0,2}\s*:", stripped, re.IGNORECASE)
         if narr_match:
             collecting_narrative = True
-            # Grab any text on the same line after the colon
             after_colon = stripped[narr_match.end():].strip()
             if after_colon and after_colon.lower() not in ("n/a", "na", ""):
                 narrative_lines.append(after_colon)
@@ -466,10 +421,9 @@ def _extract_quality_assessment(report: str) -> dict:
         if candidate.lower() not in ("n/a", "na"):
             rejection_narrative = candidate
 
-    print(
-        f"[Quality Assessment] severity={severity}, "
-        f"critical_defects={critical_defects}, "
-        f"narrative_length={len(rejection_narrative)}"
+    log.debug(
+        "Quality: severity=%s defects=%d narrative_len=%d",
+        severity, critical_defects, len(rejection_narrative),
     )
     return {
         "severity": severity,
@@ -477,11 +431,31 @@ def _extract_quality_assessment(report: str) -> dict:
         "rejection_narrative": rejection_narrative,
     }
 
-# -------- Routes -------- 
+
+# -------- Routes --------
 @app.get("/")
 async def root():
     return {"message": "Foundation Compliance Check API", "status": "running"}
 
+
+async def _read_upload(upload: UploadFile) -> bytes:
+    data = await upload.read()
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File '{upload.filename}' exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
+        )
+    return data
+
+
+def _open_image_bytes(name: str, data: bytes) -> Image.Image:
+    try:
+        img = Image.open(io.BytesIO(data))
+        if img.mode not in ("RGB", "L"):
+            img = img.convert("RGB")
+        return img
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not open '{name}' as image: {e}")
 
 
 @app.post("/api/generate-initial-report")
@@ -489,51 +463,39 @@ async def generate_initial_report(
     files: list[UploadFile] = File(...),
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Upload one or more files (PDF or images).
-    1. Orchestrator classifies the drawing type (foundation/slab/beam).
-    2. Specialist agent generates the initial compliance report.
-    3. Missing fields are extracted from the report.
-    Requires authentication.
-    """
+    """Upload PDFs or images. Classify, run specialist agent, extract missing fields."""
     from llm_handler import pdf_to_images, pil_to_base64, run_specialist_agent
     from llm_service import classify_drawing_type
 
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
-    first_ext = os.path.splitext(files[0].filename or "")[1].lower()
+    pil_images: list[Image.Image] = []
+    file_names: list[str] = []
 
     try:
-        # --- Step 1: Convert to PIL images ---
-        pil_images = []
-        file_names = []
+        for upload in files:
+            ext = os.path.splitext(upload.filename or "")[1].lower()
+            data = await _read_upload(upload)
+            if ext in ALLOWED_PDF_EXTS:
+                pdf_pages = pdf_to_images(data)
+                pil_images.extend(pdf_pages)
+                file_names.append(upload.filename or "upload.pdf")
+            elif ext in ALLOWED_IMAGE_EXTS:
+                pil_images.append(_open_image_bytes(upload.filename or "image", data))
+                file_names.append(upload.filename or "upload.png")
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unsupported file type '{ext}' — accept PDF, PNG, JPG only",
+                )
 
-        if first_ext == ".pdf":
-            pdf_bytes = await files[0].read()
-            pil_images = pdf_to_images(pdf_bytes)
-            file_names = [files[0].filename]
-        else:
-            for upload in files:
-                img_bytes = await upload.read()
-                pil_img = Image.open(io.BytesIO(img_bytes))
-                if pil_img.mode in ("RGBA", "LA", "P"):
-                    pil_img = pil_img.convert("RGB")
-                pil_images.append(pil_img)
-                file_names.append(upload.filename)
-
-        # --- Step 2: Orchestrator classifies drawing type ---
         base64_imgs = [pil_to_base64(img) for img in pil_images]
         drawing_type = classify_drawing_type(base64_imgs)
-
-        # --- Step 3: Specialist agent generates initial report ---
-        initial_report = run_specialist_agent(pil_images, drawing_type)
-
-        # --- Step 4: Extract missing fields from report ---
+        initial_report = run_specialist_agent(base64_imgs, drawing_type)
         missing_fields = _extract_missing_fields(initial_report)
 
-        # Save to Supabase DB (with drawing_type)
-        session_name = ", ".join(file_names)
+        session_name = ", ".join(file_names)[:MAX_SESSION_NAME_LEN]
         supabase = get_supabase_admin_client()
         db_result = supabase.table("reports").insert({
             "user_id": current_user["id"],
@@ -541,10 +503,8 @@ async def generate_initial_report(
             "initial_report": initial_report,
             "drawing_type": drawing_type,
         }).execute()
-
         report_id = db_result.data[0]["id"] if db_result.data else None
 
-        # --- Step 5: Extract quality assessment (severity + rejection narrative) ---
         quality_assessment = _extract_quality_assessment(initial_report)
 
         return {
@@ -558,10 +518,15 @@ async def generate_initial_report(
 
     except HTTPException:
         raise
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        log.exception("generate_initial_report failed")
+        raise HTTPException(status_code=500, detail="Initial report generation failed")
+    finally:
+        for img in pil_images:
+            try:
+                img.close()
+            except Exception:
+                pass
 
 
 @app.post("/api/generate-final-report")
@@ -570,15 +535,12 @@ async def generate_final_report(
     user_input: str = Form(...),
     drawing_type: str = Form("foundation"),
     report_id: str = Form(""),
-    assumed_values: str = Form(""),   # JSON string: {field: "value — reason"}
+    assumed_values: str = Form(""),
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Generate the final compliance report using RAG.
-    Expects the initial_report markdown, user_input text, and drawing_type.
-    Requires authentication.
-    """
+    """Generate the final compliance report using RAG."""
     import json as _json
+
     from llm_service import generate_compliance_report
 
     if not initial_report.strip() or not user_input.strip():
@@ -587,29 +549,26 @@ async def generate_final_report(
             detail="Both initial_report and user_input are required",
         )
 
-    try:
-        # Merge assumed values (from the validator) into user_input so the
-        # final report LLM sees them clearly labelled.
-        combined_user_input = user_input
-        if assumed_values.strip():
-            try:
-                assumed_dict = _json.loads(assumed_values)
-                if assumed_dict:
-                    assumed_lines = "\n".join(
-                        f"- {field}: {value} (ASSUMED — use as given)"
-                        for field, value in assumed_dict.items()
-                    )
-                    combined_user_input = (
-                        f"{user_input}\n\n"
-                        f"**Assumed values (treat as provided data):**\n{assumed_lines}"
-                    )
-            except _json.JSONDecodeError:
-                pass  # malformed JSON — ignore and proceed with raw user_input
+    combined_user_input = user_input
+    if assumed_values.strip():
+        try:
+            assumed_dict = _json.loads(assumed_values)
+            if assumed_dict:
+                assumed_lines = "\n".join(
+                    f"- {field}: {value} (ASSUMED — use as given)"
+                    for field, value in assumed_dict.items()
+                )
+                combined_user_input = (
+                    f"{user_input}\n\n"
+                    f"**Assumed values (treat as provided data):**\n{assumed_lines}"
+                )
+        except _json.JSONDecodeError:
+            log.warning("assumed_values not valid JSON — ignoring")
 
+    try:
         vectordb = get_vectordb()
         embedding_model = get_embedding_model()
-
-        final_report = generate_compliance_report(
+        final_report, rag_ok = generate_compliance_report(
             previous_analysis=initial_report,
             user_input=combined_user_input,
             drawing_type=drawing_type,
@@ -617,7 +576,6 @@ async def generate_final_report(
             embedding_model=embedding_model,
         )
 
-        # Update Supabase DB with final report
         if report_id:
             supabase = get_supabase_admin_client()
             supabase.table("reports").update({
@@ -627,33 +585,31 @@ async def generate_final_report(
         return {
             "report": final_report,
             "report_id": report_id,
+            "rag_context_used": rag_ok,
         }
 
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except Exception:
+        log.exception("generate_final_report failed")
+        raise HTTPException(status_code=500, detail="Final report generation failed")
 
 
-# ────────────────────────────────────────────────────────────
-# Validator Agent API
-# ────────────────────────────────────────────────────────────
+# ─── Validator Agent API ────────────────────────────────────────────────────
 
 class ValidateInputRequest(BaseModel):
     missing_fields: list[str]
-    user_answers: dict
+    user_answers: dict[str, str]
     report_id: str = ""
+
 
 @app.post("/api/validate-input")
 async def validate_input(
     body: ValidateInputRequest,
     current_user: dict = Depends(get_current_user),
 ):
-    """
-    Validate user-supplied answers for missing data fields.
-    Returns {valid: bool, invalid_fields: list}.
-    Requires authentication.
-    """
     from llm_service import validate_user_input as do_validate
 
     if not body.missing_fields or not body.user_answers:
@@ -663,26 +619,21 @@ async def validate_input(
         )
 
     try:
-        result = do_validate(body.missing_fields, body.user_answers)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return do_validate(body.missing_fields, body.user_answers)
+    except Exception:
+        log.exception("validate_input failed")
+        raise HTTPException(status_code=500, detail="Validation failed")
 
 
-# ────────────────────────────────────────────────────────────
-# RAG Query API
-# ────────────────────────────────────────────────────────────
+# ─── RAG Query API (authenticated) ──────────────────────────────────────────
 
 @app.get("/api/rag/query")
 async def rag_query(
     q: str,
     k: int = 5,
     content_type: Optional[str] = None,
+    current_user: dict = Depends(get_current_user),
 ):
-    """
-    Query the IS codes vector database directly.
-    Returns the top-k matching chunks.
-    """
     if not q.strip():
         raise HTTPException(status_code=400, detail="Query string 'q' is required")
 
@@ -694,50 +645,53 @@ async def rag_query(
         if content_type and content_type in ("text", "table", "image_description"):
             where = {"content_type": content_type}
 
+        effective_k = min(k, MAX_RAG_RESULTS)
         results = vectordb.query_by_text(
             query_text=q,
             embedding_model=embedding_model,
-            n_results=min(k, 20),  # cap at 20
+            n_results=effective_k,
             where=where,
         )
 
         return {
             "query": q,
             "count": len(results),
+            "k_requested": k,
+            "k_returned": effective_k,
+            "max_k": MAX_RAG_RESULTS,
             "results": results,
         }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        log.exception("rag_query failed")
+        raise HTTPException(status_code=500, detail="RAG query failed")
 
 
 @app.post("/api/download-pdf")
 async def download_pdf(
     markdown_content: str = Form(...),
     filename: str = Form("compliance_report"),
+    current_user: dict = Depends(get_current_user),
 ):
     """Convert markdown report to PDF and stream as download (no disk write)."""
-    pdf_filename = f"{filename}.pdf"
-    buffer = io.BytesIO()
+    safe = _safe_filename(filename, default="compliance_report")
+    pdf_filename = f"{safe}.pdf"
 
+    buffer = io.BytesIO()
     success, error_msg = markdown_to_pdf(markdown_content, buffer)
     if not success:
         raise HTTPException(status_code=500, detail=error_msg or "PDF conversion failed")
 
-    buffer.seek(0)
-    return StreamingResponse(
-        iter([buffer.read()]),
+    return Response(
+        content=buffer.getvalue(),
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{pdf_filename}"'},
     )
 
 
-# ────────────────────────────────────────────────────────────
-# History / Reports API
-# ────────────────────────────────────────────────────────────
+# ─── Reports API ────────────────────────────────────────────────────────────
 
 @app.get("/api/reports")
 async def list_reports(current_user: dict = Depends(get_current_user)):
-    """Get all reports for the authenticated user, newest first."""
     try:
         supabase = get_supabase_admin_client()
         result = supabase.table("reports") \
@@ -746,13 +700,13 @@ async def list_reports(current_user: dict = Depends(get_current_user)):
             .order("created_at", desc=True) \
             .execute()
         return {"reports": result.data}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        log.exception("list_reports failed")
+        raise HTTPException(status_code=500, detail="Could not list reports")
 
 
 @app.get("/api/reports/{report_id}")
 async def get_report(report_id: str, current_user: dict = Depends(get_current_user)):
-    """Get a single report by ID."""
     try:
         supabase = get_supabase_admin_client()
         result = supabase.table("reports") \
@@ -766,13 +720,37 @@ async def get_report(report_id: str, current_user: dict = Depends(get_current_us
         return {"report": result.data}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        log.exception("get_report failed")
+        raise HTTPException(status_code=500, detail="Could not fetch report")
+
+
+@app.get("/api/reports/{report_id}/missing-fields")
+async def get_report_missing_fields(
+    report_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Re-derive missing fields for a stored report (resume flow)."""
+    try:
+        supabase = get_supabase_admin_client()
+        result = supabase.table("reports") \
+            .select("initial_report") \
+            .eq("id", report_id) \
+            .eq("user_id", current_user["id"]) \
+            .single() \
+            .execute()
+        if not result.data or not result.data.get("initial_report"):
+            raise HTTPException(status_code=404, detail="Report not found")
+        return {"missing_fields": _extract_missing_fields(result.data["initial_report"])}
+    except HTTPException:
+        raise
+    except Exception:
+        log.exception("get_report_missing_fields failed")
+        raise HTTPException(status_code=500, detail="Could not derive missing fields")
 
 
 @app.delete("/api/reports/{report_id}")
 async def delete_report(report_id: str, current_user: dict = Depends(get_current_user)):
-    """Delete a report by ID. Only the owning user can delete their own reports."""
     try:
         supabase = get_supabase_admin_client()
         result = supabase.table("reports") \
@@ -785,10 +763,17 @@ async def delete_report(report_id: str, current_user: dict = Depends(get_current
         return {"deleted": True}
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    except Exception:
+        log.exception("delete_report failed")
+        raise HTTPException(status_code=500, detail="Could not delete report")
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+
+    uvicorn.run(
+        "main:app",
+        host=os.getenv("HOST", "127.0.0.1"),
+        port=int(os.getenv("PORT", "8000")),
+        reload=os.getenv("RELOAD", "false").lower() == "true",
+    )
