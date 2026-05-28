@@ -37,6 +37,7 @@ export default function DashboardPage() {
     const [missingAnswers, setMissingAnswers] = useState({});
     const [validationErrors, setValidationErrors] = useState([]);
     const [validating, setValidating] = useState(false);
+    const [reportTimestamp, setReportTimestamp] = useState(null);
 
     // Resume from history: pre-fill state if navigated with resumeReport
     useEffect(() => {
@@ -75,9 +76,14 @@ export default function DashboardPage() {
             if (cells.length < 4) continue;
             const statusCell = cells[cells.length - 1].replace(/\*\*/g, "").trim();
             if (FLAG_STATUSES.has(statusCell.toLowerCase())) {
-                let criteria = cells[0].replace(/\*\*/g, "").trim();
+                // The criteria name is in cells[0] OR cells[1] if cells[0] is just a row number (#)
+                let criteriaIdx = 0;
+                if (/^\d+$/.test(cells[0].replace(/\*\*/g, "").trim()) && cells.length >= 5) {
+                    criteriaIdx = 1;
+                }
+                let criteria = cells[criteriaIdx].replace(/\*\*/g, "").trim();
                 criteria = criteria.replace(/^\d+\.\s*/, "").trim();
-                if (criteria && !["criteria", "none", "n/a", "nil", "---"].includes(criteria.toLowerCase())) {
+                if (criteria && !/^\d+$/.test(criteria) && !["criteria", "criterion", "check", "none", "n/a", "nil", "---", "#"].includes(criteria.toLowerCase())) {
                     missingFromTable.push(criteria);
                 }
             }
@@ -91,11 +97,18 @@ export default function DashboardPage() {
         ]);
         for (const line of lines) {
             const stripped = line.trim();
-            if (stripped.startsWith("#") && /(step\s*5|missing.*(?:wrong|information))/i.test(stripped)) {
+            // Detect section header — 'Step 5', 'Phase 4', '4.1', or 'missing...wrong/information'
+            if (stripped.startsWith("#") && /(step\s*5|phase\s*4|4\.1\b|missing.*(?:wrong|information|unverifiable))/i.test(stripped)) {
                 inSection = true;
                 continue;
             }
-            if (inSection && stripped.startsWith("#")) break;
+            // Stop at 4.2, 4.3, summary, quality headings — mirror backend logic
+            if (inSection && stripped.startsWith("#")) {
+                if (/(4\.2\b|4\.3\b|summary|quality|severity)/i.test(stripped)) break;
+                // Stop at heading level ≤ 3 (### or higher) that isn't a sub-heading of 4.1
+                const headingLevel = stripped.length - stripped.replace(/^#+/, "").length;
+                if (headingLevel <= 3) break;
+            }
             if (!inSection || !stripped || stripped.startsWith("|") || /^---+$|^===+$|^\*\*\*+$/.test(stripped)) continue;
 
             let clean = stripped.replace(/^\d+\.\s*|^[-*+]\s*/, "").trim();
@@ -194,6 +207,7 @@ export default function DashboardPage() {
             setReportId(data.report_id);
             setDrawingType(data.drawing_type || "unknown");
             setMissingFields(data.missing_fields || []);
+            setReportTimestamp(Date.now());
             // Pre-fill answer slots
             const answers = {};
             (data.missing_fields || []).forEach((f) => { answers[f] = ""; });
@@ -373,7 +387,7 @@ export default function DashboardPage() {
                             </span>
                         )}
                     </div>
-                    <ReportDisplay report={initialReport} title="Initial Report" filenamePrefix="initial_compliance_report" />
+                    <ReportDisplay report={initialReport} title="Initial Report" filenamePrefix={`${drawingType || "unknown"}_init${reportTimestamp || Date.now()}`} />
                     <button
                         onClick={() => setStep(3)}
                         className="mt-5 inline-flex items-center gap-1.5 px-6 py-2.5 font-semibold text-sm text-white rounded-lg bg-gradient-to-br from-[var(--color-accent)] to-purple-600 shadow-[0_4px_14px_var(--color-accent-glow)] hover:shadow-[0_6px_22px_var(--color-accent-glow)] hover:-translate-y-0.5 transition-all cursor-pointer"
@@ -467,7 +481,7 @@ export default function DashboardPage() {
                             </span>
                         )}
                     </div>
-                    <ReportDisplay report={finalReport} title="Final Report" filenamePrefix="final_compliance_report" />
+                    <ReportDisplay report={finalReport} title="Final Report" filenamePrefix={`${drawingType || "unknown"}_final${reportTimestamp || Date.now()}`} />
                 </section>
             )}
 

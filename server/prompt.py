@@ -109,6 +109,7 @@ Task: full IS-code compliance analysis of an RCC **FOUNDATION** structural drawi
 ============================================================================
 
 #### 1.1 Title Block (verbatim — usually bottom-right)
+**⚠ ANTI-HALLUCINATION WARNING ⚠**: Do NOT guess, infer, or assume the Drawing Number, Date, or any other field based on typical formats. If a value is illegible, obscured, or missing, write "NOT ON DRAWING". Extract ONLY exactly what is written in the pixels of the image.
 Extract every label → value pair you can see. Use "NOT ON DRAWING" if blank.
 - Client:
 - Project / Building Name:
@@ -159,6 +160,9 @@ levels, you must produce 20 rows.
 | C1     | Foundation → 1st Slab    | …         | …                    | …              | …           |
 | …      | …                        | …         | …                    | …              | …           |
 
+**⚠ SCHEDULE SELF-VERIFICATION ⚠**
+Before moving to the next section, look at the schedule image again. Did you write the exact same reinforcement for every single column? Look closely at the actual image — does it show distinct rows with "10Y16", "8Y16+2Y12", or "10Y20"? If the image shows varied configurations, you MUST list them exactly. Homogenising the data is a critical failure.
+
 If a cell is genuinely blank on the drawing, write "BLANK". If you cannot
 read a cell due to resolution, write "UNREADABLE". Do NOT write
 "Not specified" unless the schedule row itself shows no value in that column.
@@ -167,8 +171,8 @@ read a cell due to resolution, write "UNREADABLE". Do NOT write
 
 | Footing ID | Length (L) | Breadth (B) | Depth (D) | Bottom Reinf (short way) | Bottom Reinf (long way) | Top Reinf (if any) |
 |------------|------------|-------------|-----------|--------------------------|--------------------------|---------------------|
-| F1         | …          | …           | …         | …                        | …                        | …                   |
-| …          | …          | …           | …         | …                        | …                        | …                   |
+| F1         | …          | …           | …           | …                        | …                        | …                   |
+| …          | …          | …           | …           | …                        | …                        | …                   |
 
 #### 1.6 Foundation Plan (visual observations)
 - Grid labels visible on X-axis: (list them, e.g., 1–9)
@@ -199,6 +203,9 @@ For each sectional view (Section X-X, A-A, etc.):
 
 For each item below: first cite the Phase 1 sub-section that contains (or
 doesn't contain) the data, THEN make the compliance call.
+
+**⚠ COMPLIANCE CERTAINTY WARNING ⚠**
+If the data in Phase 1 says "NOT ON DRAWING", "BLANK", or "UNREADABLE", your Compliance Verdict MUST state that the check cannot be completed due to missing data. The Status MUST be "Cannot Verify" or "Missing Information". NEVER assume standard defaults (like M20, Fe500, or standard covers) to force a "Compliant" status. NEVER state or imply a design is safe or compliant if the required parameters are absent.
 
 STATUS VALUES (use exactly these):
 Compliant | Non-Compliant | Missing Information | Cannot Verify | Not Applicable

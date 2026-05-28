@@ -236,11 +236,14 @@ def _extract_missing_fields(report: str) -> list[str]:
         # Skip the header / separator rows
         status_cell = cells[-1].strip().replace('**', '').strip()
         if status_cell.lower() in FLAG_STATUSES:
-            # The criteria name is in the first cell
-            criteria = cells[0].strip().replace('**', '').strip()
+            # The criteria name is in cells[0] OR cells[1] if cells[0] is just a row number (#)
+            criteria_idx = 0
+            if cells[0].replace('**', '').strip().isdigit() and len(cells) >= 5:
+                criteria_idx = 1
+            criteria = cells[criteria_idx].strip().replace('**', '').strip()
             # Strip leading number like "1. " or "12. "
             criteria = re.sub(r'^\d+\.\s*', '', criteria).strip()
-            if criteria and criteria.lower() not in ('criteria', 'none', 'n/a', 'nil', '---'):
+            if criteria and not criteria.isdigit() and criteria.lower() not in ('criteria', 'criterion', 'check', 'none', 'n/a', 'nil', '---', '#'):
                 missing_from_table.append(criteria)
 
     # ── 2. Extract from Step 5 / Phase 4 section ─────────────────
