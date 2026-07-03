@@ -1,0 +1,5 @@
+# Run the API and the RQ worker together from one container (honcho).
+# On a single free instance this keeps both processes in the same box; for a
+# paid setup, split these into two services and drop honcho.
+web: uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}
+worker: python worker.py

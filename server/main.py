@@ -1,17 +1,25 @@
+import asyncio
 import io
 import logging
 import os
 import re
 from typing import Optional
+from urllib.parse import quote
+from uuid import UUID
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from PIL import Image
 from pydantic import BaseModel
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from auth import get_current_user, router as auth_router
 from database import get_supabase_admin_client
+from extractors import extract_missing_fields
+from jobs import background_enabled, create_job, get_job, get_queue
+from rate_limit import LIMIT_GENERATE, LIMIT_JOBS, LIMIT_QUERY, limiter
 
 load_dotenv()
 
@@ -40,21 +48,29 @@ def get_embedding_model():
 
 
 # --- Limits ---
-MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))  # 50 MB default
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))           # 50 MB / file
+MAX_TOTAL_UPLOAD_BYTES = int(os.getenv("MAX_TOTAL_UPLOAD_BYTES", str(150 * 1024 * 1024)))  # 150 MB aggregate
+MAX_PAGES_PER_PDF = int(os.getenv("MAX_PAGES_PER_PDF", "30"))
 MAX_RAG_RESULTS = 20
 MAX_SESSION_NAME_LEN = 200
 ALLOWED_IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
 ALLOWED_PDF_EXTS = {".pdf"}
+ALLOWED_RAG_CONTENT_TYPES = {"text", "table", "image_description", "procedural_guide"}
+_UPLOAD_CHUNK = 64 * 1024  # 64 KB
 
 # --- FastAPI App ---
 app = FastAPI(
     title="Structural Compliance Checker",
     description="AI-powered multi-agent RCC structural drawing compliance analysis",
-    version="2.0.0",
+    version="2.1.0",
 )
 
 _origins_env = os.getenv("CORS_ALLOW_ORIGINS", "http://localhost:5173,http://localhost:3000")
 _allow_origins = [o.strip() for o in _origins_env.split(",") if o.strip()]
+
+# Rate limiting (slowapi) — register the limiter and the 429 handler.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 app.add_middleware(
     CORSMiddleware,
@@ -62,7 +78,28 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
     allow_headers=["Authorization", "Content-Type"],
+    expose_headers=["Content-Disposition", "Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining"],
 )
+
+# Whether to advertise HSTS — only when served over TLS (set ENABLE_HSTS=true in prod).
+_ENABLE_HSTS = os.getenv("ENABLE_HSTS", "false").lower() == "true"
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    """Defence-in-depth response headers. The API serves JSON/PDF, never HTML
+    that loads third-party script, so a tight CSP is safe."""
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+    if _ENABLE_HSTS:
+        response.headers.setdefault(
+            "Strict-Transport-Security", "max-age=31536000; includeSubDomains"
+        )
+    return response
+
 
 app.include_router(auth_router)
 
@@ -72,6 +109,27 @@ def _safe_filename(name: str, default: str = "report") -> str:
     cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", (name or "").strip())
     cleaned = cleaned.lstrip(".") or default
     return cleaned[:100]
+
+
+def _is_uuid(s: str) -> bool:
+    if not s:
+        return False
+    try:
+        UUID(s)
+        return True
+    except (ValueError, TypeError):
+        return False
+
+
+def _content_disposition(filename: str) -> str:
+    """RFC 5987 Content-Disposition with ASCII fallback + UTF-8 form.
+
+    Browsers that don't understand the `filename*=` form fall back to the
+    ASCII `filename=` value.
+    """
+    ascii_safe = re.sub(r"[^\x20-\x7E]", "_", filename).replace('"', "_") or "report"
+    encoded = quote(filename, safe="")
+    return f'attachment; filename="{ascii_safe}"; filename*=UTF-8\'\'{encoded}'
 
 
 # ---------- PDF generator ----------
@@ -219,217 +277,9 @@ def markdown_to_pdf(markdown_text: str, output) -> tuple[bool, Optional[str]]:
         flush_list()
         doc.build(story)
         return True, None
-    except Exception as e:
+    except Exception:
         log.exception("PDF conversion failed")
-        return False, f"PDF conversion failed: {e}"
-
-
-# ---------- Missing-field extractor ----------
-_FLAG_STATUSES = {'missing information', 'cannot verify', 'non-compliant'}
-_CATEGORY_HEADINGS = {
-    'missing information', 'cannot verify', 'non-compliant',
-    'wrong information', 'document type', 'not applicable',
-}
-_SKIP_LABELS = {'criteria', 'criterion', 'check', 'none', 'n/a', 'nil', '---', '#'}
-
-
-def _normalise(s: str) -> str:
-    return re.sub(r'[^a-z0-9]', '', s.lower())
-
-
-def _extract_missing_fields(report: str) -> list[str]:
-    """Extract missing/non-compliant fields from compliance table + Phase-4 / Step-5 section."""
-    missing_from_table: list[str] = []
-    missing_from_step5: list[str] = []
-
-    in_section = False
-    location_seen = False
-
-    for line in report.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-
-        # Table row scan
-        if stripped.startswith('|'):
-            cells = [c.strip() for c in stripped.split('|') if c.strip()]
-            if len(cells) >= 4:
-                status_cell = cells[-1].replace('**', '').strip().lower()
-                if status_cell in _FLAG_STATUSES:
-                    criteria_idx = 0
-                    if cells[0].replace('**', '').strip().isdigit() and len(cells) >= 5:
-                        criteria_idx = 1
-                    criteria = re.sub(r'^\d+\.\s*', '', cells[criteria_idx].replace('**', '').strip()).strip()
-                    if criteria and not criteria.isdigit() and criteria.lower() not in _SKIP_LABELS:
-                        missing_from_table.append(criteria)
-                        if 'location' in criteria.lower():
-                            location_seen = True
-            continue
-
-        # Section header detection
-        if stripped.startswith('#'):
-            if re.search(
-                r'(step\s*5|phase\s*4|4\.1\b|missing.*(?:wrong|information|unverifiable))',
-                stripped, re.IGNORECASE,
-            ):
-                in_section = True
-                continue
-            if in_section:
-                if re.search(r'(4\.2\b|4\.3\b|summary|quality|severity)', stripped, re.IGNORECASE):
-                    in_section = False
-                    continue
-                heading_level = len(stripped) - len(stripped.lstrip('#'))
-                if heading_level <= 3:
-                    in_section = False
-                    continue
-
-        # Site location flag from Step 0
-        if not location_seen and re.search(r'0\.2', stripped) and re.search(
-            r'(?i)missing|not\s+(mentioned|found|specified|provided|available)', stripped,
-        ):
-            if re.search(r'(?i)(site\s*)?location', stripped):
-                missing_from_step5.append('Site Location')
-                location_seen = True
-                continue
-
-        if not in_section or stripped.startswith('|') or re.match(r'^---+$|^===+$|^\*\*\*+$', stripped):
-            continue
-
-        clean = re.sub(r'^\d+\.\s*|^[-*+]\s*', '', stripped).replace('**', '').strip()
-        if not clean or clean.lower() in ('none', 'n/a', 'nil'):
-            continue
-
-        if ':' in clean:
-            prefix, _, detail = clean.partition(':')
-            prefix = prefix.strip()
-            detail = detail.strip()
-            if prefix.lower() in _CATEGORY_HEADINGS:
-                if not detail:
-                    continue
-                items = [item.strip().rstrip('.') for item in re.split(r',\s*(?![^()]*\))', detail)]
-                for item in items:
-                    item = re.sub(r'(?i)\s*due to lack of explicit data\s*', '', item).strip()
-                    item = re.sub(r'\s*\(.*?\)\s*$', '', item).strip()
-                    if item.lower().startswith('and '):
-                        item = item[4:].strip()
-                    if re.search(r'(?i)notes?\s*section|no\s+dedicated', item):
-                        continue
-                    if item and item.lower() not in ('none', 'n/a', 'nil'):
-                        missing_from_step5.append(item)
-            else:
-                if not re.search(r'(?i)notes?\s*section|no\s+dedicated', prefix):
-                    missing_from_step5.append(prefix)
-        else:
-            if not re.search(r'(?i)notes?\s*section|no\s+dedicated', clean):
-                missing_from_step5.append(clean)
-
-    seen: set[str] = set()
-    merged: list[str] = []
-    for item in missing_from_step5:
-        key = _normalise(item)
-        if key and key not in seen:
-            seen.add(key)
-            merged.append(item)
-    for item in missing_from_table:
-        key = _normalise(item)
-        if not key or key in seen:
-            continue
-        if any(key in existing or existing in key for existing in seen):
-            continue
-        seen.add(key)
-        merged.append(item)
-
-    log.debug("Missing fields merged: %s", merged)
-    return merged
-
-
-def _extract_quality_assessment(report: str) -> dict:
-    """Parse the '### Drawing Quality Assessment' / Phase-4 block."""
-    severity = "UNKNOWN"
-    critical_defects = 0
-    rejection_narrative = "N/A"
-
-    in_section = False
-    in_summary_section = False
-    narrative_lines: list[str] = []
-    collecting_narrative = False
-
-    for line in report.splitlines():
-        stripped = line.strip()
-
-        if stripped.startswith("#") and re.search(
-            r"drawing\s+quality\s+assessment|summary.*compliance|phase\s*4",
-            stripped, re.IGNORECASE,
-        ):
-            if re.search(r"drawing\s+quality", stripped, re.IGNORECASE):
-                in_section = True
-            else:
-                in_summary_section = True
-            continue
-
-        if (in_section or in_summary_section) and stripped.startswith("#"):
-            if re.search(r"drawing\s+quality\s+assessment", stripped, re.IGNORECASE):
-                in_section = True
-                in_summary_section = False
-                continue
-            heading_level = len(stripped) - len(stripped.lstrip('#'))
-            if heading_level <= 3:
-                break
-
-        if not in_section and not in_summary_section:
-            continue
-
-        sev_match = re.search(r"\*{0,2}severity\*{0,2}\s*:\s*([A-Z_]+)", stripped, re.IGNORECASE)
-        if sev_match:
-            raw_sev = sev_match.group(1).upper().strip()
-            if raw_sev in {"ACCEPTABLE", "REQUIRES_REVISION", "REJECTED"}:
-                severity = raw_sev
-            continue
-
-        verdict_match = re.search(r"\*{0,2}overall\s+verdict\*{0,2}\s*:\s*(.+)", stripped, re.IGNORECASE)
-        if verdict_match and severity == "UNKNOWN":
-            verdict_text = verdict_match.group(1).upper()
-            if "FAIL" in verdict_text or "REJECT" in verdict_text:
-                severity = "REJECTED"
-            elif "CONDITIONAL" in verdict_text or "REVISION" in verdict_text:
-                severity = "REQUIRES_REVISION"
-            elif "PASS" in verdict_text or "ACCEPT" in verdict_text:
-                severity = "ACCEPTABLE"
-            continue
-
-        defect_match = re.search(r"critical\s+defects?\s+count\s*:\s*(\d+)", stripped, re.IGNORECASE)
-        if defect_match:
-            try:
-                critical_defects = int(defect_match.group(1))
-            except ValueError:
-                pass
-            continue
-
-        narr_match = re.search(r"\*{0,2}rejection\s+narrative\*{0,2}\s*:", stripped, re.IGNORECASE)
-        if narr_match:
-            collecting_narrative = True
-            after_colon = stripped[narr_match.end():].strip()
-            if after_colon and after_colon.lower() not in ("n/a", "na", ""):
-                narrative_lines.append(after_colon)
-            continue
-
-        if collecting_narrative and stripped:
-            narrative_lines.append(stripped)
-
-    if narrative_lines:
-        candidate = " ".join(narrative_lines).strip()
-        if candidate.lower() not in ("n/a", "na"):
-            rejection_narrative = candidate
-
-    log.debug(
-        "Quality: severity=%s defects=%d narrative_len=%d",
-        severity, critical_defects, len(rejection_narrative),
-    )
-    return {
-        "severity": severity,
-        "critical_defects": critical_defects,
-        "rejection_narrative": rejection_narrative,
-    }
+        return False, "PDF conversion failed."
 
 
 # -------- Routes --------
@@ -438,19 +288,41 @@ async def root():
     return {"message": "Foundation Compliance Check API", "status": "running"}
 
 
-async def _read_upload(upload: UploadFile) -> bytes:
-    data = await upload.read()
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File '{upload.filename}' exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB limit",
-        )
-    return data
+async def _read_upload_streaming(upload: UploadFile, remaining_budget: int) -> bytes:
+    """Stream-read with early rejection if oversize.
+
+    Caller passes the remaining aggregate budget so the request fails the
+    moment cumulative bytes exceed MAX_TOTAL_UPLOAD_BYTES.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    file_cap = min(MAX_UPLOAD_BYTES, remaining_budget) + 1
+    while True:
+        chunk = await upload.read(_UPLOAD_CHUNK)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_UPLOAD_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File '{upload.filename}' exceeds {MAX_UPLOAD_BYTES // (1024 * 1024)} MB single-file limit",
+            )
+        if total > remaining_budget:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Total upload exceeds {MAX_TOTAL_UPLOAD_BYTES // (1024 * 1024)} MB aggregate limit",
+            )
+        if total > file_cap:
+            # Defence-in-depth: should be unreachable because of the two checks above.
+            raise HTTPException(status_code=413, detail="Upload too large")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _open_image_bytes(name: str, data: bytes) -> Image.Image:
     try:
         img = Image.open(io.BytesIO(data))
+        img.load()  # force decode so the underlying buffer can be released
         if img.mode not in ("RGB", "L"):
             img = img.convert("RGB")
         return img
@@ -458,27 +330,54 @@ def _open_image_bytes(name: str, data: bytes) -> Image.Image:
         raise HTTPException(status_code=400, detail=f"Could not open '{name}' as image: {e}")
 
 
-@app.post("/api/generate-initial-report")
+def _dispatch(task_func, *args) -> None:
+    """Run a task on the RQ queue, or — when no Redis is configured (local dev /
+    single-process free tier) — fire-and-forget in the thread pool. Either way
+    the API contract is identical: the route returns a job_id and the client
+    polls `GET /api/jobs/{id}` for progress and the final result."""
+    if background_enabled():
+        get_queue().enqueue(task_func, *args)
+    else:
+        asyncio.create_task(asyncio.to_thread(task_func, *args))
+
+
+@app.post("/api/generate-initial-report", status_code=202)
+@limiter.limit(LIMIT_GENERATE)
 async def generate_initial_report(
+    request: Request,
     files: list[UploadFile] = File(...),
     current_user: dict = Depends(get_current_user),
 ):
-    """Upload PDFs or images. Classify, run specialist agent, extract missing fields."""
-    from llm_handler import pdf_to_images, pil_to_base64, run_specialist_agent
-    from llm_service import classify_drawing_type
+    """Upload PDFs or images. Rasterise here, then enqueue the vision pipeline
+    as a background job. Returns a job_id immediately (202)."""
+    from llm_handler import PdfTooLargeError, pdf_to_images, pil_to_base64
+    from tasks import run_initial_report_job
 
     if not files:
         raise HTTPException(status_code=400, detail="No files provided")
 
     pil_images: list[Image.Image] = []
     file_names: list[str] = []
+    total_bytes = 0
 
     try:
         for upload in files:
             ext = os.path.splitext(upload.filename or "")[1].lower()
-            data = await _read_upload(upload)
+            remaining = MAX_TOTAL_UPLOAD_BYTES - total_bytes
+            if remaining <= 0:
+                raise HTTPException(
+                    status_code=413,
+                    detail=f"Total upload exceeds {MAX_TOTAL_UPLOAD_BYTES // (1024 * 1024)} MB aggregate limit",
+                )
+            data = await _read_upload_streaming(upload, remaining)
+            total_bytes += len(data)
+
             if ext in ALLOWED_PDF_EXTS:
-                pdf_pages = pdf_to_images(data)
+                try:
+                    # N5: PyMuPDF + PIL are blocking — off-load to a thread.
+                    pdf_pages = await asyncio.to_thread(pdf_to_images, data)
+                except PdfTooLargeError as e:
+                    raise HTTPException(status_code=413, detail=str(e))
                 pil_images.extend(pdf_pages)
                 file_names.append(upload.filename or "upload.pdf")
             elif ext in ALLOWED_IMAGE_EXTS:
@@ -490,37 +389,23 @@ async def generate_initial_report(
                     detail=f"Unsupported file type '{ext}' — accept PDF, PNG, JPG only",
                 )
 
-        base64_imgs = [pil_to_base64(img) for img in pil_images]
-        drawing_type = classify_drawing_type(base64_imgs)
-        initial_report = run_specialist_agent(base64_imgs, drawing_type)
-        missing_fields = _extract_missing_fields(initial_report)
+        if not pil_images:
+            raise HTTPException(status_code=400, detail="No usable pages extracted from upload")
 
-        session_name = ", ".join(file_names)[:MAX_SESSION_NAME_LEN]
-        supabase = get_supabase_admin_client()
-        db_result = supabase.table("reports").insert({
-            "user_id": current_user["id"],
-            "session_name": session_name,
-            "initial_report": initial_report,
-            "drawing_type": drawing_type,
-        }).execute()
-        report_id = db_result.data[0]["id"] if db_result.data else None
+        # Encode to base64 here (cheap relative to the LLM call) so the job
+        # payload that travels through Redis is the image data the model needs,
+        # not the raw multi-MB upload.
+        base64_imgs = await asyncio.to_thread(lambda: [pil_to_base64(img) for img in pil_images])
 
-        quality_assessment = _extract_quality_assessment(initial_report)
-
-        return {
-            "report": initial_report,
-            "drawing_type": drawing_type,
-            "missing_fields": missing_fields,
-            "file_names": file_names,
-            "report_id": report_id,
-            "quality_assessment": quality_assessment,
-        }
+        job_id = create_job(current_user["id"], "initial_report")
+        _dispatch(run_initial_report_job, job_id, current_user["id"], base64_imgs, file_names)
+        return {"job_id": job_id, "status": "queued"}
 
     except HTTPException:
         raise
     except Exception:
-        log.exception("generate_initial_report failed")
-        raise HTTPException(status_code=500, detail="Initial report generation failed")
+        log.exception("generate_initial_report enqueue failed")
+        raise HTTPException(status_code=500, detail="Could not start initial report job")
     finally:
         for img in pil_images:
             try:
@@ -529,8 +414,10 @@ async def generate_initial_report(
                 pass
 
 
-@app.post("/api/generate-final-report")
+@app.post("/api/generate-final-report", status_code=202)
+@limiter.limit(LIMIT_GENERATE)
 async def generate_final_report(
+    request: Request,
     initial_report: str = Form(...),
     user_input: str = Form(...),
     drawing_type: str = Form("foundation"),
@@ -538,16 +425,19 @@ async def generate_final_report(
     assumed_values: str = Form(""),
     current_user: dict = Depends(get_current_user),
 ):
-    """Generate the final compliance report using RAG."""
+    """Enqueue the multi-stage RAG + reasoning pipeline. Returns a job_id (202)."""
     import json as _json
 
-    from llm_service import generate_compliance_report
+    from tasks import run_final_report_job
 
     if not initial_report.strip() or not user_input.strip():
         raise HTTPException(
             status_code=400,
             detail="Both initial_report and user_input are required",
         )
+
+    if report_id and not _is_uuid(report_id):
+        raise HTTPException(status_code=400, detail="report_id must be a valid UUID")
 
     combined_user_input = user_input
     if assumed_values.strip():
@@ -566,35 +456,43 @@ async def generate_final_report(
             log.warning("assumed_values not valid JSON — ignoring")
 
     try:
-        vectordb = get_vectordb()
-        embedding_model = get_embedding_model()
-        final_report, rag_ok = generate_compliance_report(
-            previous_analysis=initial_report,
-            user_input=combined_user_input,
-            drawing_type=drawing_type,
-            vectordb=vectordb,
-            embedding_model=embedding_model,
+        job_id = create_job(current_user["id"], "final_report", report_id=report_id or None)
+        _dispatch(
+            run_final_report_job,
+            job_id,
+            current_user["id"],
+            initial_report,
+            combined_user_input,
+            drawing_type,
+            report_id,
         )
-
-        if report_id:
-            supabase = get_supabase_admin_client()
-            supabase.table("reports").update({
-                "final_report": final_report,
-            }).eq("id", report_id).eq("user_id", current_user["id"]).execute()
-
-        return {
-            "report": final_report,
-            "report_id": report_id,
-            "rag_context_used": rag_ok,
-        }
-
+        return {"job_id": job_id, "status": "queued"}
     except HTTPException:
         raise
-    except ValueError as e:
-        raise HTTPException(status_code=502, detail=str(e))
     except Exception:
-        log.exception("generate_final_report failed")
-        raise HTTPException(status_code=500, detail="Final report generation failed")
+        log.exception("generate_final_report enqueue failed")
+        raise HTTPException(status_code=500, detail="Could not start final report job")
+
+
+@app.get("/api/jobs/{job_id}")
+@limiter.limit(LIMIT_JOBS)
+async def get_job_status(
+    request: Request,
+    job_id: str,
+    current_user: dict = Depends(get_current_user),
+):
+    """Poll a background job. Returns status (queued|started|finished|failed),
+    progress (0-100), a human stage label, and — when finished — the result."""
+    if not _is_uuid(job_id):
+        raise HTTPException(status_code=400, detail="job_id must be a valid UUID")
+    try:
+        job = get_job(job_id, current_user["id"])
+    except Exception:
+        log.exception("get_job_status failed")
+        raise HTTPException(status_code=500, detail="Could not fetch job")
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return {"job": job}
 
 
 # ─── Validator Agent API ────────────────────────────────────────────────────
@@ -619,7 +517,11 @@ async def validate_input(
         )
 
     try:
-        return do_validate(body.missing_fields, body.user_answers)
+        return await asyncio.to_thread(do_validate, body.missing_fields, body.user_answers)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except Exception:
         log.exception("validate_input failed")
         raise HTTPException(status_code=500, detail="Validation failed")
@@ -628,10 +530,13 @@ async def validate_input(
 # ─── RAG Query API (authenticated) ──────────────────────────────────────────
 
 @app.get("/api/rag/query")
+@limiter.limit(LIMIT_QUERY)
 async def rag_query(
+    request: Request,
     q: str,
     k: int = 5,
     content_type: Optional[str] = None,
+    element_type: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
 ):
     if not q.strip():
@@ -641,16 +546,19 @@ async def rag_query(
         vectordb = get_vectordb()
         embedding_model = get_embedding_model()
 
-        where = None
-        if content_type and content_type in ("text", "table", "image_description"):
-            where = {"content_type": content_type}
+        where: dict[str, str] = {}
+        if content_type and content_type in ALLOWED_RAG_CONTENT_TYPES:
+            where["content_type"] = content_type
+        if element_type and element_type in {"foundation", "slab", "beam", "column", "general"}:
+            where["element_type"] = element_type
 
         effective_k = min(k, MAX_RAG_RESULTS)
-        results = vectordb.query_by_text(
-            query_text=q,
-            embedding_model=embedding_model,
-            n_results=effective_k,
-            where=where,
+        results = await asyncio.to_thread(
+            vectordb.query_by_text,
+            q,
+            embedding_model,
+            effective_k,
+            where or None,
         )
 
         return {
@@ -667,7 +575,9 @@ async def rag_query(
 
 
 @app.post("/api/download-pdf")
+@limiter.limit(LIMIT_QUERY)
 async def download_pdf(
+    request: Request,
     markdown_content: str = Form(...),
     filename: str = Form("compliance_report"),
     current_user: dict = Depends(get_current_user),
@@ -677,14 +587,14 @@ async def download_pdf(
     pdf_filename = f"{safe}.pdf"
 
     buffer = io.BytesIO()
-    success, error_msg = markdown_to_pdf(markdown_content, buffer)
+    success, error_msg = await asyncio.to_thread(markdown_to_pdf, markdown_content, buffer)
     if not success:
         raise HTTPException(status_code=500, detail=error_msg or "PDF conversion failed")
 
     return Response(
         content=buffer.getvalue(),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{pdf_filename}"'},
+        headers={"Content-Disposition": _content_disposition(pdf_filename)},
     )
 
 
@@ -707,6 +617,8 @@ async def list_reports(current_user: dict = Depends(get_current_user)):
 
 @app.get("/api/reports/{report_id}")
 async def get_report(report_id: str, current_user: dict = Depends(get_current_user)):
+    if not _is_uuid(report_id):
+        raise HTTPException(status_code=400, detail="report_id must be a valid UUID")
     try:
         supabase = get_supabase_admin_client()
         result = supabase.table("reports") \
@@ -731,6 +643,8 @@ async def get_report_missing_fields(
     current_user: dict = Depends(get_current_user),
 ):
     """Re-derive missing fields for a stored report (resume flow)."""
+    if not _is_uuid(report_id):
+        raise HTTPException(status_code=400, detail="report_id must be a valid UUID")
     try:
         supabase = get_supabase_admin_client()
         result = supabase.table("reports") \
@@ -741,7 +655,7 @@ async def get_report_missing_fields(
             .execute()
         if not result.data or not result.data.get("initial_report"):
             raise HTTPException(status_code=404, detail="Report not found")
-        return {"missing_fields": _extract_missing_fields(result.data["initial_report"])}
+        return {"missing_fields": extract_missing_fields(result.data["initial_report"])}
     except HTTPException:
         raise
     except Exception:
@@ -751,6 +665,8 @@ async def get_report_missing_fields(
 
 @app.delete("/api/reports/{report_id}")
 async def delete_report(report_id: str, current_user: dict = Depends(get_current_user)):
+    if not _is_uuid(report_id):
+        raise HTTPException(status_code=400, detail="report_id must be a valid UUID")
     try:
         supabase = get_supabase_admin_client()
         result = supabase.table("reports") \

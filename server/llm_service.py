@@ -1,7 +1,25 @@
+"""Orchestrator, Validator, and final-report RAG agents.
+
+Major design points (see plan v2 for full rationale):
+- Embedding queries are *focused* — never the full refinement prompt. BGE
+  truncates at 512 tokens, so embedding a 4 000-token report makes the
+  embedding meaningless (everyone's query reduces to the same template
+  header).
+- Multi-query retrieval: one sub-query per compliance row when we can
+  parse them out of the previous report. Falls back to a single focused
+  query when row parsing fails.
+- Drawing-type metadata filter restricts retrieval to chunks tagged with
+  the relevant element_type (+ general SP 34 / IS 456 chunks).
+- Cross-encoder reranker (see reranker.py) re-scores the merged candidate
+  set; MMR optionally diversifies before truncating to top-K.
+"""
+from __future__ import annotations
+
 import json
 import logging
+import os
 import re
-from typing import NoReturn
+from typing import Any, NoReturn
 
 from openai import APIError
 
@@ -11,8 +29,15 @@ from openai_client import (
     VALIDATOR_MODEL,
     get_openai_client,
 )
+from reranker import cross_encoder_rerank, is_mmr_enabled, mmr_select
 
 log = logging.getLogger(__name__)
+
+RAG_TOP_N = int(os.getenv("RAG_TOP_N", "40"))
+RAG_TOP_K = int(os.getenv("RAG_TOP_K", "10"))
+RAG_PER_QUERY_K = int(os.getenv("RAG_PER_QUERY_K", "5"))
+RAG_MAX_SUBQUERIES = int(os.getenv("RAG_MAX_SUBQUERIES", "8"))
+RAG_MIN_SCORE = float(os.getenv("RAG_MIN_SCORE", "0.0"))
 
 
 def classify_drawing_type(base64_images: list[str]) -> str:
@@ -68,7 +93,12 @@ def classify_drawing_type(base64_images: list[str]) -> str:
 
 
 def validate_user_input(missing_fields: list[str], user_answers: dict) -> dict:
-    """Validate user-supplied answers. Returns {valid, invalid_fields, assumed_values}."""
+    """Validate user-supplied answers. Returns {valid, invalid_fields, assumed_values}.
+
+    Infrastructure errors (APIError, network) are re-raised so the caller
+    returns a 5xx rather than silently passing invalid data downstream.
+    Only JSON-parse problems fall through with valid=True.
+    """
     from prompt import VALIDATOR_PROMPT
 
     fields_json = json.dumps(missing_fields, indent=2)
@@ -90,9 +120,8 @@ def validate_user_input(missing_fields: list[str], user_answers: dict) -> dict:
             max_tokens=1024,
             response_format={"type": "json_object"},
         )
-    except Exception:
-        log.exception("Validator error — treating input as valid.")
-        return {"valid": True, "invalid_fields": [], "assumed_values": {}}
+    except APIError as e:
+        _handle_api_error(e)
 
     raw = (response.choices[0].message.content or "").strip()
     log.debug("Validator raw response: %s", raw)
@@ -123,48 +152,213 @@ def validate_user_input(missing_fields: list[str], user_answers: dict) -> dict:
     }
 
 
+# ─── Retrieval helpers ────────────────────────────────────────────────────────
+
+_ROW_RE = re.compile(r"^\|(.*)\|\s*$")
+
+
+def _extract_compliance_rows(previous_analysis: str) -> list[str]:
+    """Pull human-readable criterion strings out of the Phase-2 / Phase-3 tables.
+
+    A row like
+        | 5 | Clear Cover — Column | IS 456 Cl. 26.4 | ... | Compliant |
+    yields the sub-query string `"Clear Cover — Column IS 456 Cl. 26.4"`.
+    """
+    subqueries: list[str] = []
+    seen: set[str] = set()
+    for raw_line in previous_analysis.splitlines():
+        line = raw_line.strip()
+        m = _ROW_RE.match(line)
+        if not m:
+            continue
+        cells = [c.strip().replace("**", "") for c in m.group(1).split("|")]
+        cells = [c for c in cells if c]
+        if len(cells) < 3:
+            continue
+        # Skip header / separator rows.
+        joined = " ".join(cells).lower()
+        if all(re.fullmatch(r"[-: ]+", c) for c in cells):
+            continue
+        if "criterion" in joined and "status" in joined:
+            continue
+
+        # First non-numeric cell = criterion; locate an IS clause if present.
+        criterion = next(
+            (c for c in cells if not c.isdigit() and not re.fullmatch(r"P\d+\.?", c)),
+            "",
+        )
+        if not criterion or len(criterion) > 120:
+            continue
+        is_ref = next(
+            (c for c in cells if re.search(r"IS\s*\d+|SP\s*\d+|Cl\.\s*\d", c)),
+            "",
+        )
+        sub = f"{criterion} {is_ref}".strip()
+        key = sub.lower()
+        if key not in seen:
+            seen.add(key)
+            subqueries.append(sub)
+    return subqueries
+
+
+def _build_focused_query(
+    drawing_type: str,
+    user_input: str,
+    fallback_topics: list[str],
+) -> str:
+    """Single short query used when multi-query is not viable."""
+    topics = ", ".join(fallback_topics[:10]) if fallback_topics else ""
+    head = (user_input or "").strip()[:500]
+    return (
+        f"{drawing_type} RCC compliance "
+        f"{topics} {head}".strip()
+    )
+
+
+def _retrieve_with_context(
+    *,
+    vectordb,
+    embedding_model,
+    drawing_type: str,
+    previous_analysis: str,
+    user_input: str,
+) -> tuple[list[dict[str, Any]], bool, bool]:
+    """Run the full retrieval pipeline. Returns (results, rag_succeeded, low_confidence)."""
+    where = None
+    if drawing_type and drawing_type != "unknown":
+        where = {"element_type": {"$in": [drawing_type, "general"]}}
+
+    subqueries = _extract_compliance_rows(previous_analysis)
+    use_multi = 0 < len(subqueries) <= RAG_MAX_SUBQUERIES
+
+    candidate_map: dict[str, dict[str, Any]] = {}
+    primary_query_embedding: list[float] | None = None
+
+    try:
+        if use_multi:
+            log.info("RAG: multi-query over %d compliance rows", len(subqueries))
+            for sq in subqueries[:RAG_MAX_SUBQUERIES]:
+                emb = embedding_model.embed_query(f"{drawing_type} {sq}")
+                primary_query_embedding = primary_query_embedding or emb
+                hits = vectordb.query(
+                    [emb],
+                    n_results=RAG_PER_QUERY_K,
+                    where=where,
+                    include_embeddings=is_mmr_enabled(),
+                )
+                for h in hits:
+                    h_id = h["id"]
+                    if h_id not in candidate_map or h.get("score", 1e9) < candidate_map[h_id].get("score", 1e9):
+                        candidate_map[h_id] = h
+        else:
+            log.info("RAG: focused single-query (multi-query unavailable, sub=%d)", len(subqueries))
+            query = _build_focused_query(drawing_type, user_input, subqueries)
+            log.debug("Focused query: %s", query[:200])
+            emb = embedding_model.embed_query(query)
+            primary_query_embedding = emb
+            for h in vectordb.query(
+                [emb],
+                n_results=RAG_TOP_N,
+                where=where,
+                include_embeddings=is_mmr_enabled(),
+            ):
+                candidate_map[h["id"]] = h
+
+        candidates = list(candidate_map.values())
+        if not candidates:
+            log.warning("RAG: no candidates retrieved.")
+            return [], False, True
+
+        # Cross-encoder rerank against a single representative query string.
+        rerank_query = _build_focused_query(drawing_type, user_input, subqueries)
+        reranked = cross_encoder_rerank(rerank_query, candidates, top_k=RAG_TOP_N)
+
+        # Diversify and truncate to RAG_TOP_K.
+        if primary_query_embedding is not None:
+            final = mmr_select(primary_query_embedding, reranked, top_k=RAG_TOP_K)
+        else:
+            final = reranked[:RAG_TOP_K]
+
+        # Low-confidence detection — uses rerank_score when present.
+        scored = [r.get("rerank_score") for r in final if r.get("rerank_score") is not None]
+        low_confidence = bool(scored) and max(scored) < RAG_MIN_SCORE
+        log.info(
+            "RAG: candidates=%d reranked=%d final=%d low_confidence=%s",
+            len(candidates), len(reranked), len(final), low_confidence,
+        )
+        return final, True, low_confidence
+
+    except Exception:
+        log.exception("RAG retrieval failed — proceeding without context")
+        return [], False, True
+
+
+def _format_context(results: list[dict[str, Any]]) -> str:
+    if not results:
+        return "No relevant IS code context found."
+    return "\n\n".join(
+        f"[Source: {(r.get('metadata') or {}).get('source_file', 'N/A')}, "
+        f"Section: {(r.get('metadata') or {}).get('section_number', 'N/A')}, "
+        f"Clause: {(r.get('metadata') or {}).get('clause_id', 'N/A')}, "
+        f"Element: {(r.get('metadata') or {}).get('element_type', 'general')}]\n"
+        f"{r.get('document', '')}"
+        for r in results
+    )
+
+
+# ─── Status-cell-only "Compliant uses assumption" check ───────────────────────
+
+
+def _row_is_compliant_with_assumption(row: str) -> bool:
+    """True if a markdown table row's STATUS cell is bare-Compliant AND
+    any earlier cell references assumption language."""
+    cells = [c.strip() for c in row.split("|") if c.strip()]
+    if len(cells) < 2:
+        return False
+    status_raw = cells[-1].replace("**", "")
+    status_norm = re.sub(r"[^A-Za-z ]", "", status_raw).lower().strip()
+    if "conditionally" in status_norm:
+        return False
+    if "non" in status_norm or "not" in status_norm:
+        return False
+    if "compliant" not in status_norm:
+        return False
+    body = " | ".join(cells[:-1])
+    return bool(re.search(r"\b(assumed|generally taken)\b", body, re.IGNORECASE))
+
+
 def generate_compliance_report(
     previous_analysis: str,
     user_input: str,
     drawing_type: str,
     vectordb,
     embedding_model,
-    k: int = 15,
-) -> tuple[str, bool]:
+    k: int = 15,  # kept for backward-compat; new pipeline uses RAG_TOP_N/RAG_TOP_K
+) -> tuple[str, bool, bool]:
     """Generate the final compliance report using RAG + reasoning model.
 
     Returns:
-        (report_markdown, rag_succeeded). When rag_succeeded is False the caller
-        can warn the user that the verdict was produced without IS-code context.
+        (report_markdown, rag_succeeded, rag_confidence_low).
     """
     from prompt import REFINEMENT_PROMPT_TEMPLATE
 
-    refinement_prompt = REFINEMENT_PROMPT_TEMPLATE.format(
+    # N2 fix: switch from str.format to str.replace so `{` / `}` in the
+    # source content (LaTeX, JSON examples, etc.) can no longer crash us.
+    refinement_prompt = (
+        REFINEMENT_PROMPT_TEMPLATE
+        .replace("<<DRAWING_TYPE>>", drawing_type or "unknown")
+        .replace("<<PREVIOUS_ANALYSIS>>", previous_analysis)
+        .replace("<<USER_INPUT>>", user_input)
+    )
+
+    final_results, rag_ok, low_confidence = _retrieve_with_context(
+        vectordb=vectordb,
+        embedding_model=embedding_model,
         drawing_type=drawing_type,
         previous_analysis=previous_analysis,
         user_input=user_input,
     )
-
-    log.info("Embedding query and retrieving IS code context")
-    rag_succeeded = False
-    try:
-        query_embedding = embedding_model.embed_query(refinement_prompt)
-        retrieved = vectordb.query([query_embedding], n_results=k)
-        if retrieved:
-            context_texts = "\n\n".join(
-                f"[Source: {(r.get('metadata') or {}).get('source_file', 'N/A')}, "
-                f"Section: {(r.get('metadata') or {}).get('section_number', 'N/A')}, "
-                f"Clause: {(r.get('metadata') or {}).get('clause_id', 'N/A')}, "
-                f"Content Type: {(r.get('metadata') or {}).get('content_type', 'N/A')}]\n{r.get('document', '')}"
-                for r in retrieved
-            )
-            rag_succeeded = True
-        else:
-            log.warning("No IS code context retrieved — proceeding without RAG context.")
-            context_texts = "No relevant IS code context found."
-    except Exception:
-        log.exception("RAG retrieval failed — proceeding without context.")
-        context_texts = "IS code context unavailable."
+    context_texts = _format_context(final_results)
 
     system_prompt = """\
 You are a Senior Indian Civil Engineer specialising in RCC compliance verification.
@@ -228,22 +422,22 @@ UNIFORM MEMBER SIZE RULES:
     except APIError as e:
         _handle_api_error(e)
 
-    report = response.choices[0].message.content
-    if not report:
-        raise ValueError("Empty response from compliance model — please retry.")
+    # N13: o4-mini can return empty content when reasoning_tokens consume
+    # the budget — surface that specifically rather than as a generic 500.
+    choice = response.choices[0]
+    report = choice.message.content
+    if not report or not report.strip():
+        finish = getattr(choice, "finish_reason", "?")
+        raise ValueError(
+            f"Reasoning model returned no content (finish_reason={finish}). "
+            "Likely ran out of completion tokens — please retry."
+        )
 
-    # Post validation: a row marked "Compliant" must not also rely on assumption
-    # language. Conditionally-Compliant rows are allowed to.
-    bad_rows = []
-    for line in report.splitlines():
-        if not line.startswith("|"):
-            continue
-        if "Conditionally" in line:
-            continue
-        if not re.search(r"\bCompliant\b", line):
-            continue
-        if re.search(r"\b(assumed|generally taken)\b", line, re.IGNORECASE):
-            bad_rows.append(line)
+    # N4: status cell ONLY — bare "Compliant" + assumption language = bad.
+    bad_rows = [
+        line for line in report.splitlines()
+        if line.startswith("|") and _row_is_compliant_with_assumption(line)
+    ]
     if bad_rows:
         raise ValueError(
             f"Model marked {len(bad_rows)} row(s) Compliant using assumption language. "
@@ -254,7 +448,7 @@ UNIFORM MEMBER SIZE RULES:
         raise ValueError("Output has no Markdown table with a 'Source' column.")
 
     log.info("Final compliance report generated.")
-    return report, rag_succeeded
+    return report, rag_ok, low_confidence
 
 
 def _handle_api_error(e: APIError) -> NoReturn:

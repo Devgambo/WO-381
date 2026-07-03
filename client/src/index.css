@@ -1,24 +1,46 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg-primary: #0f1117;
-  --color-bg-secondary: #1a1d2e;
-  --color-bg-card: rgba(26, 29, 46, 0.85);
-  --color-bg-glass: rgba(255, 255, 255, 0.04);
-  --color-border-subtle: rgba(255, 255, 255, 0.08);
-  --color-border-hover: rgba(255, 255, 255, 0.15);
-  --color-text-primary: #e8eaf0;
-  --color-text-secondary: #9ba1b7;
-  --color-text-muted: #636a84;
+  /* Surfaces */
+  --color-bg-primary: #08090d;
+  --color-bg-secondary: #0f1117;
+  --color-bg-card: #0f1117;
+  --color-bg-elevated: #131722;
+  --color-bg-glass: rgba(255, 255, 255, 0.025);
+  --color-bg-input: #0a0c12;
+
+  /* Borders */
+  --color-border-subtle: #1a1e2a;
+  --color-border-medium: #262b3a;
+  --color-border-strong: #353c50;
+  --color-border-hover: #4a536a;
+
+  /* Text */
+  --color-text-primary: #f0f2f7;
+  --color-text-secondary: #8a92a8;
+  --color-text-muted: #4d5468;
+  --color-text-faint: #353a48;
+
+  /* Accent */
   --color-accent: #6366f1;
-  --color-accent-light: #818cf8;
-  --color-accent-glow: rgba(99, 102, 241, 0.25);
-  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --color-accent-light: #a5b4fc;
+  --color-accent-dim: #4f51c4;
+  --color-accent-glow: rgba(99, 102, 241, 0.12);
+
+  /* Semantic */
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #38bdf8;
+
+  /* Type */
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", "Cascadia Mono", Menlo, Consolas, monospace;
 }
 
 @layer base {
   html {
-    font-size: 15px;
+    font-size: 14px;
     scroll-behavior: smooth;
   }
 
@@ -27,23 +49,129 @@
     background: var(--color-bg-primary);
     color: var(--color-text-primary);
     -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-feature-settings: "cv11", "ss03", "ss02";
+    letter-spacing: -0.005em;
+  }
+
+  *:focus-visible {
+    outline: 1px solid var(--color-accent);
+    outline-offset: 1px;
   }
 
   ::-webkit-scrollbar {
-    width: 6px;
+    width: 8px;
+    height: 8px;
   }
 
   ::-webkit-scrollbar-track {
-    background: transparent;
+    background: var(--color-bg-secondary);
   }
 
   ::-webkit-scrollbar-thumb {
-    background: var(--color-border-subtle);
-    border-radius: 3px;
+    background: var(--color-border-medium);
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-border-strong);
+  }
+
+  ::selection {
+    background: var(--color-accent);
+    color: #fff;
   }
 }
 
-/* Spinner animation */
+/* ------------------------------------------------------------------ */
+/* Utility classes                                                    */
+/* ------------------------------------------------------------------ */
+
+.label-mono {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "zero", "cv01";
+}
+
+.hairline {
+  background: var(--color-border-subtle);
+  height: 1px;
+}
+
+.panel {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border-subtle);
+}
+
+.btn-primary {
+  background: var(--color-accent);
+  color: #ffffff;
+  border: 1px solid var(--color-accent);
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: #7c7fff;
+  border-color: #7c7fff;
+}
+
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-secondary {
+  background: transparent;
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border-medium);
+  font-weight: 500;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.btn-secondary:hover:not(:disabled) {
+  border-color: var(--color-border-hover);
+  background: var(--color-bg-glass);
+}
+
+.btn-danger {
+  background: transparent;
+  color: var(--color-danger);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.btn-danger:hover:not(:disabled) {
+  border-color: var(--color-danger);
+  background: rgba(239, 68, 68, 0.08);
+}
+
+.input-base {
+  background: var(--color-bg-input);
+  border: 1px solid var(--color-border-medium);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.input-base:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  background: var(--color-bg-secondary);
+}
+
+/* ------------------------------------------------------------------ */
+/* Animations                                                         */
+/* ------------------------------------------------------------------ */
+
 @keyframes spin {
   to {
     transform: rotate(360deg);
@@ -54,13 +182,11 @@
   animation: spin 0.8s linear infinite;
 }
 
-/* Fade-up entrance animation */
 @keyframes fadeUp {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translateY(8px);
   }
-
   to {
     opacity: 1;
     transform: translateY(0);
@@ -68,88 +194,155 @@
 }
 
 .animate-fade-up {
-  animation: fadeUp 0.3s ease-out;
+  animation: fadeUp 0.25s ease-out;
 }
 
-/* Markdown content styling */
+@keyframes barberpole {
+  from { background-position: 0 0; }
+  to { background-position: 24px 0; }
+}
+
+.progress-stripe {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--color-accent) 0,
+    var(--color-accent) 6px,
+    var(--color-accent-dim) 6px,
+    var(--color-accent-dim) 12px
+  );
+  animation: barberpole 1s linear infinite;
+}
+
+/* ------------------------------------------------------------------ */
+/* Markdown body styling                                              */
+/* ------------------------------------------------------------------ */
+
+.markdown-body {
+  color: var(--color-text-secondary);
+  font-size: 13.5px;
+  line-height: 1.65;
+}
+
 .markdown-body h1,
 .markdown-body h2,
 .markdown-body h3,
 .markdown-body h4 {
   color: var(--color-text-primary);
-  margin-top: 1.2rem;
-  margin-bottom: 0.5rem;
-  font-weight: 700;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin-top: 1.4rem;
+  margin-bottom: 0.6rem;
 }
 
 .markdown-body h1 {
-  font-size: 1.3rem;
+  font-size: 1.25rem;
+  border-bottom: 1px solid var(--color-border-medium);
+  padding-bottom: 0.4rem;
 }
 
 .markdown-body h2 {
   font-size: 1.1rem;
+  color: var(--color-accent-light);
 }
 
 .markdown-body h3 {
   font-size: 0.95rem;
 }
 
+.markdown-body h4 {
+  font-size: 0.85rem;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
 .markdown-body p {
   margin-bottom: 0.6rem;
-  color: var(--color-text-secondary);
 }
 
 .markdown-body strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.markdown-body em {
   color: var(--color-text-primary);
 }
 
 .markdown-body ul,
 .markdown-body ol {
-  padding-left: 1.5rem;
+  padding-left: 1.4rem;
   margin-bottom: 0.6rem;
 }
 
 .markdown-body li {
-  margin-bottom: 0.25rem;
-  color: var(--color-text-secondary);
+  margin-bottom: 0.2rem;
 }
 
 .markdown-body table {
   width: 100%;
   border-collapse: collapse;
   margin: 1rem 0;
-  font-size: 0.82rem;
+  font-size: 12.5px;
+  font-family: var(--font-sans);
 }
 
 .markdown-body th {
-  background: rgba(99, 102, 241, 0.15);
+  background: var(--color-bg-elevated);
   color: var(--color-accent-light);
   font-weight: 600;
   text-align: left;
-  padding: 0.6rem 0.75rem;
-  border: 1px solid var(--color-border-subtle);
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--color-border-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 10.5px;
 }
 
 .markdown-body td {
-  padding: 0.5rem 0.75rem;
+  padding: 0.5rem 0.7rem;
   border: 1px solid var(--color-border-subtle);
   color: var(--color-text-secondary);
+  vertical-align: top;
 }
 
 .markdown-body tr:nth-child(even) td {
-  background: rgba(255, 255, 255, 0.02);
+  background: rgba(255, 255, 255, 0.012);
 }
 
 .markdown-body code {
-  background: rgba(99, 102, 241, 0.12);
+  background: var(--color-bg-elevated);
   color: var(--color-accent-light);
-  padding: 0.15rem 0.4rem;
-  border-radius: 4px;
-  font-size: 0.82rem;
+  padding: 0.1rem 0.35rem;
+  border: 1px solid var(--color-border-subtle);
+  font-family: var(--font-mono);
+  font-size: 0.84em;
+}
+
+.markdown-body pre {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-subtle);
+  padding: 0.8rem;
+  overflow-x: auto;
+  margin: 0.8rem 0;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  border: none;
+  padding: 0;
 }
 
 .markdown-body hr {
   border: none;
   border-top: 1px solid var(--color-border-subtle);
-  margin: 1rem 0;
+  margin: 1.2rem 0;
+}
+
+.markdown-body blockquote {
+  border-left: 2px solid var(--color-accent);
+  padding-left: 0.8rem;
+  color: var(--color-text-secondary);
+  margin: 0.6rem 0;
+  font-style: normal;
 }

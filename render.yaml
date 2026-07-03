@@ -1,0 +1,54 @@
+# Render Blueprint (alternative to the Hugging Face Spaces path in DEPLOYMENT.md).
+#
+# COST NOTE: Render's free web service has only 512 MB RAM — NOT enough for the
+# local BGE-large embedder + cross-encoder reranker (~2-3 GB). To run on Render
+# you must EITHER:
+#   (a) use a paid plan with >=2 GB RAM for the worker (see `plan:` below), OR
+#   (b) switch retrieval to the OpenAI embeddings path (see DEPLOYMENT.md §"Fit
+#       the backend into 512 MB") and set RERANK_ENABLED=false — then the free
+#       plan works and you pay only OpenAI's tiny embedding cost.
+#
+# Render background workers are a PAID feature. The free tier only covers the
+# web service. If you want everything free, use the single-container HF Spaces
+# path instead (web + worker via honcho).
+
+services:
+  - type: web
+    name: compliance-api
+    runtime: python
+    rootDir: server
+    plan: starter            # ~$7/mo. `free` only works with the OpenAI-embeddings path.
+    buildCommand: pip install -e . && python ingest.py
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: REDIS_URL
+        sync: false           # paste your Upstash rediss:// URL
+      - key: CORS_ALLOW_ORIGINS
+        sync: false
+      - key: ENABLE_HSTS
+        value: "true"
+
+  - type: worker
+    name: compliance-worker   # PAID — Render has no free worker tier.
+    runtime: python
+    rootDir: server
+    plan: standard            # >=2 GB RAM for the local ML models.
+    buildCommand: pip install -e .
+    startCommand: python worker.py
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: REDIS_URL
+        sync: false

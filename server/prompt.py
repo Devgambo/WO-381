@@ -725,7 +725,7 @@ Respond with ONLY a valid JSON object — no text outside JSON:
 # doesn't conflict with the "Assumed Values" section title)
 # ─────────────────────────────────────────────────────────────────────────────
 REFINEMENT_PROMPT_TEMPLATE = """\
-Drawing Type: {drawing_type}
+Drawing Type: <<DRAWING_TYPE>>
 
 Re-evaluate the compliance checklist using the information below. For any field where
 the user said "assume" or provided an assumed value, use that value directly and
@@ -770,10 +770,10 @@ Assumptions" section heading only.
 ---
 
 ## Previous Analysis (from specialist agent — Phases 1–4)
-{previous_analysis}
+<<PREVIOUS_ANALYSIS>>
 
 ## User-Supplied / Assumed Values
-{user_input}
+<<USER_INPUT>>
 """
 
 

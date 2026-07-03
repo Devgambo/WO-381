@@ -6,6 +6,12 @@ function authHeaders(token) {
 }
 
 async function readErr(res, fallback) {
+  if (res.status === 429) {
+    const retry = res.headers.get("Retry-After");
+    return retry
+      ? `Rate limit reached — try again in ${retry}s.`
+      : "Rate limit reached — please slow down and retry shortly.";
+  }
   const err = await res.json().catch(() => ({ detail: res.statusText }));
   return err.detail || fallback;
 }
@@ -13,6 +19,19 @@ async function readErr(res, fallback) {
 async function jsonFetch(url, opts = {}, fallback = "Request failed") {
   const res = await fetch(url, opts);
   if (!res.ok) throw new Error(await readErr(res, fallback));
+  return res.json();
+}
+
+export async function refreshSession(refreshToken) {
+  // Use the raw, unwrapped fetch so the auth wrapper can call this during a
+  // 401 retry without recursing.
+  const raw = window.fetch.__original || window.fetch;
+  const res = await raw(`${API_BASE}/api/auth/refresh`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refreshToken }),
+  });
+  if (!res.ok) throw new Error(await readErr(res, "Session refresh failed"));
   return res.json();
 }
 
@@ -40,6 +59,8 @@ export async function logoutUser(token) {
   }, "Logout failed").catch(() => null);
 }
 
+// Both generate endpoints are now async jobs: they return { job_id, status }.
+// Poll getJobStatus / pollJob to retrieve the result.
 export async function generateInitialReport(files, token) {
   const formData = new FormData();
   files.forEach((file) => formData.append("files", file));
@@ -48,7 +69,38 @@ export async function generateInitialReport(files, token) {
     method: "POST",
     headers: authHeaders(token),
     body: formData,
-  }, "Failed to generate initial report");
+  }, "Failed to start initial report");
+}
+
+export async function getJobStatus(jobId, token) {
+  return jsonFetch(`${API_BASE}/api/jobs/${jobId}`, {
+    headers: authHeaders(token),
+  }, "Failed to fetch job status");
+}
+
+/**
+ * Poll a background job until it finishes or fails.
+ * @param {string} jobId
+ * @param {string} token
+ * @param {(job: object) => void} [onTick] called with each job snapshot
+ * @param {{ intervalMs?: number, timeoutMs?: number, signal?: AbortSignal }} [opts]
+ * @returns {Promise<object>} the job's `result` payload
+ */
+export async function pollJob(jobId, token, onTick, opts = {}) {
+  const intervalMs = opts.intervalMs ?? 2000;
+  const timeoutMs = opts.timeoutMs ?? 5 * 60 * 1000;
+  const started = Date.now();
+
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    if (opts.signal?.aborted) throw new Error("Cancelled");
+    const { job } = await getJobStatus(jobId, token);
+    if (onTick) onTick(job);
+    if (job.status === "finished") return job.result;
+    if (job.status === "failed") throw new Error(job.error || "Job failed");
+    if (Date.now() - started > timeoutMs) throw new Error("Job timed out — please retry");
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
 }
 
 export async function generateFinalReport(initialReport, userInput, drawingType, reportId, token, assumedValues = {}) {
@@ -65,7 +117,7 @@ export async function generateFinalReport(initialReport, userInput, drawingType,
     method: "POST",
     headers: authHeaders(token),
     body: formData,
-  }, "Failed to generate final report");
+  }, "Failed to start final report");
 }
 
 export async function validateInput(missingFields, userAnswers, token) {
@@ -76,9 +128,10 @@ export async function validateInput(missingFields, userAnswers, token) {
   }, "Validation failed");
 }
 
-export async function queryRag(q, token, k = 5, contentType = null) {
+export async function queryRag(q, token, k = 5, contentType = null, elementType = null) {
   const params = new URLSearchParams({ q, k: String(k) });
   if (contentType) params.append("content_type", contentType);
+  if (elementType) params.append("element_type", elementType);
 
   return jsonFetch(`${API_BASE}/api/rag/query?${params.toString()}`, {
     headers: authHeaders(token),
@@ -131,5 +184,7 @@ export async function downloadPdf(markdownContent, filename = "compliance_report
   document.body.appendChild(a);
   a.click();
   a.remove();
-  URL.revokeObjectURL(url);
+  // F11: Safari cancels the download if the URL is revoked before the
+  // click event has fully propagated. Defer.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

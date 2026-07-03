@@ -28,13 +28,19 @@ def get_supabase_client() -> Client:
 
 def get_supabase_admin_client() -> Client:
     """Return the Supabase client initialised with the **service_role** key.
-    Use this for server-side DB operations that need to bypass RLS."""
+    Use this for server-side DB operations that need to bypass RLS.
+
+    Refusing to fall back to the anon key on purpose — a silent fallback
+    leaves RLS enforced for what we believe are bypass operations and
+    surfaces as 'empty result' bugs at runtime.
+    """
     global _supabase_admin_client
     if _supabase_admin_client is None:
-        key = SUPABASE_SERVICE_ROLE_KEY or SUPABASE_KEY
-        if not SUPABASE_URL or not key:
+        if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
             raise RuntimeError(
-                "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set in .env"
+                "SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must both be set in .env. "
+                "Refusing to fall back to the anon key — service-role access is required "
+                "for server-side DB writes."
             )
-        _supabase_admin_client = create_client(SUPABASE_URL, key)
+        _supabase_admin_client = create_client(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY)
     return _supabase_admin_client

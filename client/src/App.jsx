@@ -23,9 +23,11 @@ function CatchAll() {
 
 function AppLayout({ children }) {
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen bg-[var(--color-bg-primary)]">
       <Sidebar />
-      <main className="ml-[280px] flex-1 px-12 py-10 max-w-[960px] max-md:ml-0 max-md:px-5">
+      <main className="ml-[260px] flex-1 px-12 py-10 max-w-[1080px] w-full max-md:ml-0 max-md:px-5 max-md:pt-20">
+        {/* Top hairline ribbon */}
+        <div className="h-px bg-[var(--color-border-subtle)] mb-10" aria-hidden />
         {children}
       </main>
     </div>

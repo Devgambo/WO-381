@@ -10,6 +10,14 @@ dependencies = [
     "uvicorn[standard]>=0.30.0",
     "python-multipart>=0.0.9",
 
+    # Rate limiting
+    "slowapi>=0.1.9",
+
+    # Background jobs
+    "redis>=5.0.0",
+    "rq>=1.16.0",
+    "honcho>=1.1.0",  # run web + worker from one Procfile (single free container)
+
     # Core utilities
     "numpy",
     "python-dotenv",

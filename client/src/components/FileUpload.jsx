@@ -7,6 +7,12 @@ const ACCEPTED = {
   "image/jpeg": [".jpg", ".jpeg"],
 };
 
+function formatSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+}
+
 export default function FileUpload({ files, setFiles }) {
   const onDrop = useCallback(
     (accepted) => setFiles((prev) => [...prev, ...accepted]),
@@ -23,56 +29,67 @@ export default function FileUpload({ files, setFiles }) {
 
   return (
     <div>
-      {/* Dropzone */}
       <div
         {...getRootProps()}
-        className={`border-2 border-dashed rounded-xl p-10 text-center cursor-pointer transition-all
+        className={`relative border-2 border-dashed p-10 text-center cursor-pointer transition-colors
           ${isDragActive
             ? "border-[var(--color-accent)] bg-[var(--color-accent-glow)]"
-            : "border-[var(--color-border-subtle)] bg-[var(--color-bg-glass)] hover:border-[var(--color-accent)] hover:bg-[var(--color-accent-glow)]"
+            : "border-[var(--color-border-medium)] bg-[var(--color-bg-input)] hover:border-[var(--color-border-hover)] hover:bg-[var(--color-bg-glass)]"
           }`}
       >
         <input {...getInputProps()} />
-        <span className="text-4xl block mb-2">📁</span>
-        {isDragActive ? (
-          <p className="text-sm font-medium text-[var(--color-text-primary)]">Drop the files here…</p>
-        ) : (
-          <>
+        <div className="flex flex-col items-center gap-2">
+          <div className="w-10 h-10 grid place-items-center border border-[var(--color-border-medium)] mono text-[var(--color-text-secondary)] text-xs">
+            DROP
+          </div>
+          {isDragActive ? (
             <p className="text-sm font-medium text-[var(--color-text-primary)]">
-              Drag & drop PDF or image files here
+              Release to drop files
             </p>
-            <span className="text-xs text-[var(--color-text-muted)] mt-1 block">
-              or click to browse • Supports PDF, PNG, JPG
-            </span>
-          </>
-        )}
+          ) : (
+            <>
+              <p className="text-sm font-medium text-[var(--color-text-primary)]">
+                Drag & drop drawings here
+              </p>
+              <span className="label-mono">
+                or click to browse · pdf, png, jpg
+              </span>
+            </>
+          )}
+        </div>
       </div>
 
-      {/* File List */}
       {files.length > 0 && (
-        <div className="mt-4">
-          <h4 className="text-sm font-semibold text-[var(--color-text-secondary)] mb-2">📎 Selected Files</h4>
-          {files.map((f, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-2.5 px-3 py-2 rounded-lg bg-[var(--color-bg-glass)] border border-[var(--color-border-subtle)] mb-1.5 hover:border-[var(--color-border-hover)] transition-colors"
-            >
-              <span className="text-lg">{f.type === "application/pdf" ? "📄" : "🖼️"}</span>
-              <span className="flex-1 text-sm font-medium text-[var(--color-text-primary)] truncate">
-                {f.name}
-              </span>
-              <span className="text-xs text-[var(--color-text-muted)]">
-                {(f.size / 1024).toFixed(1)} KB
-              </span>
-              <button
-                onClick={() => removeFile(i)}
-                title="Remove file"
-                className="bg-transparent border-none text-[var(--color-text-muted)] cursor-pointer text-sm px-1.5 py-0.5 rounded hover:text-red-400 hover:bg-red-500/15 transition-colors"
+        <div className="mt-5">
+          <div className="flex items-center justify-between mb-2">
+            <span className="label-mono">Queued files</span>
+            <span className="label-mono">{files.length.toString().padStart(2, "0")}</span>
+          </div>
+          <div className="border border-[var(--color-border-subtle)] divide-y divide-[var(--color-border-subtle)]">
+            {files.map((f, i) => (
+              <div
+                key={`${f.name}-${i}`}
+                className="flex items-center gap-3 px-3 py-2 bg-[var(--color-bg-card)] hover:bg-[var(--color-bg-glass)] transition-colors"
               >
-                ✕
-              </button>
-            </div>
-          ))}
+                <span className="mono text-[10px] uppercase tracking-wider text-[var(--color-accent-light)] border border-[var(--color-border-medium)] px-1.5 py-0.5">
+                  {f.type === "application/pdf" ? "PDF" : "IMG"}
+                </span>
+                <span className="flex-1 text-sm text-[var(--color-text-primary)] truncate">
+                  {f.name}
+                </span>
+                <span className="mono text-xs text-[var(--color-text-muted)]">
+                  {formatSize(f.size)}
+                </span>
+                <button
+                  onClick={() => removeFile(i)}
+                  title="Remove file"
+                  className="w-6 h-6 grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:bg-[rgba(239,68,68,0.08)] transition-colors cursor-pointer bg-transparent border-none mono text-xs"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

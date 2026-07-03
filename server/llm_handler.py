@@ -1,6 +1,7 @@
 import base64
 import io
 import logging
+import os
 
 import fitz  # PyMuPDF
 from PIL import Image
@@ -15,17 +16,27 @@ log = logging.getLogger(__name__)
 # annotations readable.
 _MAX_DIM = 3072
 _RENDER_DPI = 220
+_MAX_PAGES_PER_PDF = int(os.getenv("MAX_PAGES_PER_PDF", "30"))
 
 
-def pdf_to_images(pdf_source):
+class PdfTooLargeError(ValueError):
+    """Raised when a PDF exceeds MAX_PAGES_PER_PDF."""
+
+
+def pdf_to_images(pdf_source, max_pages: int | None = None) -> list[Image.Image]:
     """Convert each PDF page to a PIL Image, longest side capped at _MAX_DIM."""
-    images = []
+    images: list[Image.Image] = []
     if isinstance(pdf_source, (bytes, bytearray)):
         doc = fitz.open(stream=pdf_source, filetype="pdf")
     else:
         doc = fitz.open(pdf_source)
     try:
-        for page_num in range(len(doc)):
+        limit = max_pages if max_pages is not None else _MAX_PAGES_PER_PDF
+        if doc.page_count > limit:
+            raise PdfTooLargeError(
+                f"PDF has {doc.page_count} pages; per-document limit is {limit}."
+            )
+        for page_num in range(doc.page_count):
             page = doc.load_page(page_num)
             pix = page.get_pixmap(dpi=_RENDER_DPI)
             img = Image.open(io.BytesIO(pix.tobytes("png")))
@@ -107,4 +118,13 @@ def run_specialist_agent(base64_images: list[str], drawing_type: str) -> str:
         max_tokens=16000,
     )
 
-    return response.choices[0].message.content
+    choice = response.choices[0]
+    content = choice.message.content
+    if not content or not content.strip():
+        # N3: empty vision-model output → splitlines crash downstream.
+        finish = getattr(choice, "finish_reason", "?")
+        raise ValueError(
+            f"Vision model returned no content (finish_reason={finish}). "
+            "Likely model output blocked or truncated — please retry."
+        )
+    return content
