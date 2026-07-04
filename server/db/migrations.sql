@@ -26,7 +26,7 @@ alter table jobs enable row level security;
 -- service-role key (which bypasses RLS) but always scope by user_id.
 drop policy if exists "users see own jobs" on jobs;
 create policy "users see own jobs" on jobs
-  for all using (auth.uid() = user_id);
+  for all using (auth.uid() = user_id); 
 
 -- Optional housekeeping: purge finished/failed jobs older than a day.
 -- Schedule with pg_cron if available, or run manually.

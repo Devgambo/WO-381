@@ -23,23 +23,36 @@ FINAL.ipynb
 # Lock file (optional - can be large)
 # uv.lock
 
-# IDE settings
+# IDE / tool artifacts
 .idea/
 .vscode/
+.claude/
 
 # Jupyter checkpoints
 .ipynb_checkpoints/
 
+# ─── Internal docs (not for GitHub) ───
+IMPLEMENTATION.md
+INTERVIEW_PREP.md
+ARCHITECTURE.md
+DEPLOYMENT.md
+
+# ─── Sample / test PDFs ───
+*.pdf
+
 # ─── Server ───
 server/.venv/
 server/__pycache__/
+server/.claude/
 server/uploads/
 server/reports/
 server/first_extract/
 server/RESULT/
+server/SP34_md_backup/
 server/chroma_db/
 server/result.json
 server/test_extract.py
+server/.env
 
 # ─── Client ───
 client/node_modules/

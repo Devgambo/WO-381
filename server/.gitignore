@@ -1,0 +1,18 @@
+# Secrets — NEVER push this
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# Built at image build time by ingest.py
+chroma_db/
+
+# IDE / tool artifacts
+.claude/
+.vscode/
+
+# Local-only folders
+RESULT/
+SP34_md_backup/
