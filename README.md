@@ -1,61 +1,77 @@
-# 🏗️ Structural Compliance Check using Multi-Agent AI
+# 🏗️ Structural Drawing Compliance Checker
 
-> **AI-powered analysis of Indian RCC structural drawings (Foundations, Slabs, Beams, Columns) against IS 456:2000 and SP 34.**
+> **Upload an RCC structural drawing → get a detailed IS 456 / SP 34 compliance report in seconds.**
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![React 19](https://img.shields.io/badge/React-19-61DAFB.svg)](https://react.dev/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688.svg)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
+An AI-powered system that reads Indian RCC structural drawings (foundations, slabs, beams, columns), extracts engineering parameters using GPT-4o vision, validates them against **IS 456:2000** and **SP 34**, and produces a clause-by-clause compliance verdict — all through a modern web interface with real-time progress tracking.
+
 ---
 
-## 📋 Overview
+## ✨ Key Features
 
-Multi-agent + RAG pipeline that classifies an uploaded structural drawing, extracts engineering parameters, validates user-supplied missing fields, and produces a compliance verdict citing IS code clauses.
+- **Multi-drawing support** — Foundations, Slabs, Beams, and Columns
+- **AI vision extraction** — GPT-4o reads dimensions, rebar schedules, and spacing directly from the drawing
+- **RAG-powered verdicts** — Final reports cite specific IS code clauses retrieved from a local vector store
+- **Multi-agent pipeline** — Orchestrator → Specialist → Validator → RAG Reporter, each with a focused role
+- **Smart validation** — The Validator agent catches implausible values and supplies IS-code defaults when the user says "assume"
+- **Background processing** — Long AI workflows run as queued jobs with a live progress bar
+- **Report history** — Save, resume, and download reports as Markdown or PDF
+- **Auth & security** — Supabase auth with refresh-token rotation, RLS, rate limiting, and security headers
 
-Codes covered:
-- **IS 456:2000** — Plain & Reinforced Concrete
-- **SP 34** — Handbook on Concrete Reinforcement & Detailing
-- **IS 1786, IS 13920, IS 1893, IS 875** — referenced in checklists
+---
 
-### Features
+## 🔄 How It Works
 
-- 📄 Foundation / Slab / Beam / Column drawing support
-- 🤖 Multi-agent orchestration (Orchestrator → Specialist → Validator → RAG Reporter)
-- ✅ Validator agent enforces engineering-plausible answers and supplies IS-code defaults when the user says "assume"
-- 📚 RAG over cleaned SP 34 + IS code markdown chunks, embedded with `BAAI/bge-large-en-v1.5`
-- 💾 Supabase auth + report history with RLS
-- 📊 Markdown and PDF (ReportLab) download
-- 🔄 Resume incomplete reports from history
-- ⚙️ **Background processing (Redis + RQ)** — long LLM workflows run as jobs; the UI shows a live progress bar and polls for the result
-- 🚦 **Rate limiting (slowapi)** on auth, generate, query and download routes
-- 🔐 **Auth hardening** — refresh-token rotation, silent + on-401 token refresh, security headers
-- 📕 **Storybook** stories for the core UI components
-
-> 📌 New in this release: see [`IMPLEMENTATION.md`](./IMPLEMENTATION.md) for what
-> was added and full local-run steps, and [`DEPLOYMENT.md`](./DEPLOYMENT.md) for
-> a free-first deploy guide.
+```
+  ┌─────────────┐
+  │  Upload PDF  │
+  │  (drawing)   │
+  └──────┬───────┘
+         ▼
+  ┌─────────────────────┐
+  │  1. Classify         │  ← GPT-4o-mini identifies drawing type
+  │  2. Vision Extract   │  ← GPT-4o reads engineering params from image
+  └──────┬───────────────┘
+         ▼
+  ┌─────────────────────┐
+  │  3. User fills gaps  │  ← Missing fields shown in UI; Validator
+  │     + Validate       │    checks plausibility & applies IS defaults
+  └──────┬───────────────┘
+         ▼
+  ┌─────────────────────┐
+  │  4. RAG Retrieval    │  ← Relevant IS 456 / SP 34 clauses fetched
+  │     (ChromaDB +      │    from local vector store (BGE embeddings
+  │      reranker)       │    + cross-encoder reranking + MMR)
+  └──────┬───────────────┘
+         ▼
+  ┌─────────────────────┐
+  │  5. Final Report     │  ← o4-mini reasoning model produces a
+  │     (compliance      │    clause-by-clause compliance verdict
+  │      verdict)        │
+  └──────┬───────────────┘
+         ▼
+    ✅ / ❌ / ⚠️
+    Per-check verdict
+    with IS code citations
+```
 
 ---
 
 ## 🛠️ Tech Stack
 
-| Component | Technology |
-|-----------|-----------|
-| **Frontend** | React 19, Vite, Tailwind CSS, React Router |
-| **Backend** | FastAPI, Pydantic, Python 3.11 |
-| **Vision LLM** | OpenAI `gpt-4o` (configurable via `OPENAI_VISION_MODEL`) |
-| **Reasoning LLM** | OpenAI `o4-mini` for the final report (configurable via `OPENAI_FINAL_REPORT_MODEL`) |
-| **Orchestrator / Validator** | OpenAI `gpt-4o-mini` |
-| **Vector store** | ChromaDB (local, persisted at `server/chroma_db/`) |
-| **Embeddings** | HuggingFace `BAAI/bge-large-en-v1.5` |
-| **Auth & DB** | Supabase (PostgreSQL + RLS) |
-| **Background jobs** | Redis + RQ (job state persisted in Supabase) |
-| **Rate limiting** | slowapi (Redis- or memory-backed) |
-| **Process manager** | honcho (runs API + worker together) |
-| **PDF** | ReportLab |
-| **PDF parsing** | PyMuPDF (fitz) |
-| **Component dev** | Storybook 9 |
+| Layer | Technology |
+|-------|-----------|
+| **Frontend** | React 19 · Vite · Tailwind CSS · React Router · Storybook 9 |
+| **Backend** | FastAPI · Python 3.11 · honcho (process manager) |
+| **AI / LLM** | GPT-4o (vision) · GPT-4o-mini (orchestrator/validator) · o4-mini (reasoning) |
+| **RAG** | ChromaDB · BAAI/bge-large-en-v1.5 · cross-encoder reranker · MMR |
+| **Auth & DB** | Supabase (PostgreSQL + Row Level Security) |
+| **Jobs** | Redis + RQ (gracefully degrades to in-process for local dev) |
+| **PDF** | PyMuPDF (parsing) · ReportLab (generation) |
 
 ---
 
@@ -63,50 +79,41 @@ Codes covered:
 
 ### Prerequisites
 
-- Python 3.11+
-- [uv](https://docs.astral.sh/uv/getting-started/installation/) (or pip)
-- Node.js 20+ / npm
+- Python 3.11+ with [uv](https://docs.astral.sh/uv/)
+- Node.js 20+
 - OpenAI API key
-- Supabase project (URL + anon key + service-role key)
-- **Optional:** Docker, for Redis. Without it, background jobs run in-process.
+- Supabase project (free tier works)
 
-### 1. Backend
+### Backend
 
 ```bash
 cd server
+cp .env.example .env          # fill in API keys and Supabase creds
 
-# Configure environment — every variable is documented in .env.example
-cp .env.example .env
-#   then fill in OPENAI_API_KEY, SUPABASE_URL, SUPABASE_KEY,
-#   SUPABASE_SERVICE_ROLE_KEY. Leave REDIS_URL pointing at localhost if you
-#   start Redis below, or comment it out to run jobs in-process.
+uv sync                       # install dependencies
+uv run python clean_docs.py   # one-time: clean source markdown
+uv run python ingest.py       # one-time: build the RAG vector index
 
-# (Optional) Redis broker for background jobs + shared rate-limit counters
-docker run -d -p 6379:6379 redis:7-alpine
-
-# Install
-uv sync
-
-# One-time: clean source markdown and build the RAG index.
-# Use --rebuild whenever the embedding model, chunking strategy, or distance
-# metric changes; ordinary re-runs upsert in place via stable chunk IDs.
-uv run python clean_docs.py
-uv run python ingest.py --rebuild
-
-# Run the API + RQ worker together (honcho reads the Procfile)
-uv run honcho start
-
-#  …or run them separately:
-#  uv run uvicorn main:app --reload --port 8000
-#  uv run python worker.py        # only needed when REDIS_URL is set
+uv run honcho start            # starts API (port 8000) + worker together
 ```
 
-> On Windows, set `RQ_SIMPLE_WORKER=1` in `.env` (the worker can't fork).
+> **No Redis?** Leave `REDIS_URL` empty — jobs run in-process automatically.
+> **Windows?** Set `RQ_SIMPLE_WORKER=1` in `.env`.
 
-Supabase schema — the `reports` table **and** the new `jobs` table
-(`server/db/migrations.sql`):
+### Frontend
+
+```bash
+cd client
+npm install
+npm run dev                    # → http://localhost:5173
+```
+
+### Database
+
+Run these in your Supabase SQL editor:
 
 ```sql
+-- Reports table
 create table reports (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -120,7 +127,7 @@ alter table reports enable row level security;
 create policy "users see own reports" on reports
   for all using (auth.uid() = user_id);
 
--- Background-job tracking (full DDL in server/db/migrations.sql)
+-- Jobs table (see server/db/migrations.sql for full DDL)
 create table jobs (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -139,93 +146,68 @@ create policy "users see own jobs" on jobs
   for all using (auth.uid() = user_id);
 ```
 
-### 2. Frontend
-
-```bash
-cd client
-
-cat > .env <<'ENV'
-VITE_API_BASE_URL=http://localhost:8000
-ENV
-
-npm install
-npm run dev               # app at http://localhost:5173
-npm run storybook         # component workshop at http://localhost:6006
-```
-
-App runs at `http://localhost:5173`.
-
 ---
 
 ## 📁 Project Structure
 
 ```
-├── client/                     # React 19 frontend (Vite + Tailwind)
-│   ├── .storybook/             # Storybook 9 config
-│   └── src/
-│       ├── api.js              # API client: job submit/poll, token refresh
-│       ├── App.jsx             # Routes
-│       ├── components/         # FileUpload, ReportDisplay, Sidebar, UserInputForm (+ *.stories.jsx)
-│       ├── context/            # AuthContext (JWT + silent/on-401 refresh)
-│       ├── stories/            # Storybook decorators
-│       └── pages/              # Login, Dashboard (job progress), History
+client/                          # React SPA
+├── src/
+│   ├── api.js                   # API client with job polling & token refresh
+│   ├── context/AuthContext.jsx   # JWT auth + silent refresh
+│   ├── pages/                   # Login, Dashboard, History
+│   └── components/              # FileUpload, ReportDisplay, Sidebar (+stories)
 │
-└── server/                     # FastAPI backend
-    ├── main.py                 # Routes (enqueue jobs, security headers, rate limits)
-    ├── auth.py                 # JWT validation + refresh-token rotation
-    ├── rate_limit.py           # slowapi limiter + limits
-    ├── jobs.py                 # RQ queue + Supabase jobs-table helpers
-    ├── tasks.py                # Worker job functions (initial / final report)
-    ├── worker.py               # RQ worker entrypoint
-    ├── extractors.py           # Report parsers (shared by API + worker)
-    ├── database.py             # Supabase client init (anon + service role)
-    ├── openai_client.py        # Shared OpenAI client + model IDs
-    ├── llm_handler.py          # Specialist (vision) agent
-    ├── llm_service.py          # Orchestrator, Validator, RAG Reporter
-    ├── prompt.py               # All LLM prompts (per drawing type)
-    ├── embedding_service.py    # Lazy BAAI/bge-large embedder
-    ├── vector_db.py            # ChromaDB wrapper
-    ├── data_loader.py          # SP 34 markdown chunking
-    ├── ingest.py               # One-time RAG index builder
-    ├── clean_docs.py           # One-time SP 34 OCR cleanup
-    ├── Dockerfile / Procfile   # API + worker container (honcho)
-    ├── .env.example            # All env vars, documented
-    ├── db/migrations.sql       # jobs table DDL
-    ├── SP34_md/                # Source IS code markdown
-    └── chroma_db/              # Persisted vector index
+server/                          # FastAPI backend
+├── main.py                      # Routes, security headers, rate limits
+├── tasks.py                     # Worker job functions
+├── jobs.py                      # RQ queue + Supabase job-state helpers
+├── llm_service.py               # Orchestrator, Validator, RAG Reporter agents
+├── llm_handler.py               # Vision extraction (Specialist agent)
+├── vector_db.py                 # ChromaDB wrapper (search + MMR + reranking)
+├── prompt.py                    # All LLM prompts (per drawing type)
+├── Dockerfile + Procfile        # Production container (API + worker)
+└── SP34_md/                     # IS code source documents for RAG
 ```
 
 ---
 
-## 🔌 API Surface
+## 🔌 API Reference
 
-All `/api/*` routes (except `/`, `/api/auth/*`) require `Authorization: Bearer <token>`.
+Generate routes are **asynchronous** — they return `202 { job_id }` and the client polls for progress.
 
-Both generate routes are **asynchronous**: they return `202 { job_id }` and the
-client polls `GET /api/jobs/{id}` for progress and the final result.
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `POST` | `/api/auth/signup` | Create account |
+| `POST` | `/api/auth/login` | Login (returns access + refresh token) |
+| `POST` | `/api/auth/refresh` | Rotate tokens |
+| `POST` | `/api/generate-initial-report` | Upload drawing → enqueue extraction → `202` |
+| `POST` | `/api/generate-final-report` | Enqueue RAG compliance verdict → `202` |
+| `GET` | `/api/jobs/{id}` | Poll job status / progress / result |
+| `POST` | `/api/validate-input` | Validate user-supplied fields |
+| `GET` | `/api/reports` | List reports |
+| `GET` | `/api/reports/{id}` | Get report |
+| `DELETE` | `/api/reports/{id}` | Delete report |
+| `GET` | `/api/rag/query` | Direct RAG query |
+| `POST` | `/api/download-pdf` | Export report as PDF |
 
-| Method | Path | Purpose |
-|--------|------|---------|
-| POST | `/api/auth/signup` | Create user (returns access + refresh token) |
-| POST | `/api/auth/login` | Email/password login (returns access + refresh token) |
-| POST | `/api/auth/refresh` | Rotate tokens via refresh token |
-| POST | `/api/auth/logout` | Invalidate Supabase session |
-| POST | `/api/generate-initial-report` | Upload drawing → **enqueue** classify/extract → `202 { job_id }` |
-| POST | `/api/generate-final-report` | **Enqueue** RAG-backed final verdict → `202 { job_id }` |
-| GET  | `/api/jobs/{id}` | Poll background job status / progress / result |
-| POST | `/api/validate-input` | Validate user-supplied missing fields |
-| GET  | `/api/reports` | List user's reports |
-| GET  | `/api/reports/{id}` | Get a single report |
-| GET  | `/api/reports/{id}/missing-fields` | Re-derive missing fields (resume) |
-| DELETE | `/api/reports/{id}` | Delete a report |
-| GET  | `/api/rag/query` | Direct RAG query (`q`, `k`, `content_type`) |
-| POST | `/api/download-pdf` | Markdown → PDF |
+**Rate limits:** auth `5/min` · generate `5/min` · query/PDF `30/min` · job polling `120/min`
 
-Rate limits apply per token/IP (429 on exceed): auth `5/min`, generate `5/min`,
-query & PDF `30/min`, job polling `120/min`.
+---
+
+## 🏗️ Indian Standards Covered
+
+| Code | Title |
+|------|-------|
+| **IS 456:2000** | Plain and Reinforced Concrete — Code of Practice |
+| **SP 34** | Handbook on Concrete Reinforcement and Detailing |
+| **IS 1786** | High Strength Deformed Steel Bars and Wires |
+| **IS 13920** | Ductile Design and Detailing of RC Structures |
+| **IS 1893** | Earthquake Resistant Design |
+| **IS 875** | Design Loads |
 
 ---
 
 ## 📄 License
 
-MIT.
+MIT
