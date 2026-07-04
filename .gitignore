@@ -32,10 +32,10 @@ FINAL.ipynb
 .ipynb_checkpoints/
 
 # ─── Internal docs (not for GitHub) ───
-IMPLEMENTATION.md
-INTERVIEW_PREP.md
-ARCHITECTURE.md
-DEPLOYMENT.md
+IMPLEMENTATION.md 
+INTERVIEW_PREP.md 
+ARCHITECTURE.md 
+DEPLOYMENT.md 
 
 # ─── Sample / test PDFs ───
 *.pdf
