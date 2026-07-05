@@ -13,7 +13,7 @@ const SAMPLE = `### Phase 1 — Transcription
 |---|----------|----------|--------|
 | 1 | Concrete grade | M25 | Compliant |
 | 2 | Clear cover | 40 mm | Compliant |
-| 3 | Lap length | Not shown | Missing Information ⚠️ |
+| 3 | Lap length | Not shown | Missing Information |
 
 ### Phase 4 — Drawing Quality Assessment
 
@@ -25,7 +25,7 @@ const SAMPLE = `### Phase 1 — Transcription
 export const InitialReport = {
     args: {
         report: SAMPLE,
-        title: "Phase 1 → Phase 4 report",
+        title: "Phase 1–4 report",
         filenamePrefix: "foundation_init",
     },
 };

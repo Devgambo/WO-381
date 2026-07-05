@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "../context/AuthContext";
 import { useNavigate } from "react-router-dom";
+import { AlertTriangleIcon, ArrowRightIcon, CheckIcon } from "../components/Icons";
 
 export default function LoginPage() {
     const [isSignup, setIsSignup] = useState(false);
@@ -101,15 +102,15 @@ export default function LoginPage() {
                     </div>
 
                     {signupSuccess && (
-                        <div className="border border-[rgba(16,185,129,0.35)] bg-[rgba(16,185,129,0.07)] text-[var(--color-success)] px-4 py-3 text-xs mb-5 flex items-start gap-2">
-                            <span className="mono mt-0.5">→</span>
+                        <div className="rounded-[3px] border border-[rgba(16,185,129,0.35)] bg-[rgba(16,185,129,0.07)] text-[var(--color-success)] px-4 py-3 text-xs mb-5 flex items-start gap-2">
+                            <CheckIcon size={14} className="shrink-0 mt-0.5" />
                             <span>Account created. Check your email to confirm, then sign in.</span>
                         </div>
                     )}
 
                     {error && (
-                        <div className="border border-[rgba(239,68,68,0.35)] bg-[rgba(239,68,68,0.07)] text-[var(--color-danger)] px-4 py-3 text-xs mb-5 flex items-start gap-2">
-                            <span className="mono mt-0.5">!</span>
+                        <div className="rounded-[3px] border border-[rgba(239,68,68,0.35)] bg-[rgba(239,68,68,0.07)] text-[var(--color-danger)] px-4 py-3 text-xs mb-5 flex items-start gap-2">
+                            <AlertTriangleIcon size={14} className="shrink-0 mt-0.5" />
                             <span>{error}</span>
                         </div>
                     )}
@@ -167,7 +168,7 @@ export default function LoginPage() {
                             ) : (
                                 <>
                                     <span>{isSignup ? "Create account" : "Sign in"}</span>
-                                    <span className="mono">→</span>
+                                    <ArrowRightIcon size={14} />
                                 </>
                             )}
                         </button>
@@ -179,9 +180,10 @@ export default function LoginPage() {
                         </span>
                         <button
                             onClick={() => { setIsSignup(!isSignup); setError(null); setSignupSuccess(false); }}
-                            className="text-xs text-[var(--color-accent-light)] hover:text-[var(--color-accent)] transition-colors bg-transparent border-none cursor-pointer mono uppercase tracking-wider"
+                            className="text-xs text-[var(--color-accent-light)] hover:text-[var(--color-accent)] transition-colors bg-transparent border-none cursor-pointer mono uppercase tracking-wider inline-flex items-center gap-1.5"
                         >
-                            {isSignup ? "Sign in" : "Sign up"} →
+                            <span>{isSignup ? "Sign in" : "Sign up"}</span>
+                            <ArrowRightIcon size={12} />
                         </button>
                     </div>
                 </div>

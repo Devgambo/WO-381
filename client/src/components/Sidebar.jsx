@@ -1,6 +1,20 @@
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import {
+    CompassIcon,
+    HistoryIcon,
+    LogOutIcon,
+    MenuIcon,
+    PlusIcon,
+    XIcon,
+} from "./Icons";
+
+const NAV_ITEMS = [
+    { to: "/dashboard", label: "New Report", Icon: PlusIcon },
+    { to: "/history", label: "History", Icon: HistoryIcon },
+    { to: "/about", label: "How it works", Icon: CompassIcon },
+];
 
 export default function Sidebar() {
     const { user, logout } = useAuth();
@@ -27,9 +41,9 @@ export default function Sidebar() {
                 type="button"
                 onClick={() => setOpen((v) => !v)}
                 aria-label={open ? "Close menu" : "Open menu"}
-                className="md:hidden fixed top-4 left-4 z-30 w-10 h-10 grid place-items-center bg-[var(--color-bg-secondary)] border border-[var(--color-border-medium)] text-base mono cursor-pointer"
+                className="md:hidden fixed top-4 left-4 z-30 w-10 h-10 grid place-items-center bg-[var(--color-bg-secondary)] border border-[var(--color-border-medium)] text-[var(--color-text-primary)] cursor-pointer rounded-[3px]"
             >
-                {open ? "✕" : "≡"}
+                {open ? <XIcon size={16} /> : <MenuIcon size={16} />}
             </button>
 
             {open && (
@@ -67,17 +81,15 @@ export default function Sidebar() {
 
                 {/* Nav */}
                 <nav className="flex flex-col py-3">
-                    <NavLink to="/dashboard" className={linkClass} onClick={close}>
-                        <span className="mono text-[10px] text-[var(--color-text-muted)] w-4">01</span>
-                        <span>New Report</span>
-                    </NavLink>
-                    <NavLink to="/history" className={linkClass} onClick={close}>
-                        <span className="mono text-[10px] text-[var(--color-text-muted)] w-4">02</span>
-                        <span>History</span>
-                    </NavLink>
+                    {NAV_ITEMS.map((item) => (
+                        <NavLink key={item.to} to={item.to} className={linkClass} onClick={close}>
+                            <item.Icon size={15} className="shrink-0 opacity-70" />
+                            <span>{item.label}</span>
+                        </NavLink>
+                    ))}
                 </nav>
 
-                {/* About */}
+                {/* Codes covered */}
                 <div className="px-5 py-4 border-t border-[var(--color-border-subtle)]">
                     <p className="label-mono mb-2">Codes covered</p>
                     <ul className="space-y-1 text-xs text-[var(--color-text-secondary)] leading-relaxed">
@@ -127,9 +139,10 @@ export default function Sidebar() {
                 <div className="px-5 py-4 border-t border-[var(--color-border-subtle)]">
                     <button
                         onClick={handleLogout}
-                        className="btn-danger w-full px-3 py-2 text-xs mono uppercase tracking-wider cursor-pointer"
+                        className="btn-danger w-full px-3 py-2 text-xs mono uppercase tracking-wider cursor-pointer inline-flex items-center justify-center gap-2"
                     >
-                        Sign out
+                        <LogOutIcon size={13} />
+                        <span>Sign out</span>
                     </button>
                 </div>
             </aside>

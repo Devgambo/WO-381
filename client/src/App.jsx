@@ -3,6 +3,7 @@ import { AuthProvider, useAuth } from "./context/AuthContext";
 import LoginPage from "./pages/LoginPage";
 import DashboardPage from "./pages/DashboardPage";
 import HistoryPage from "./pages/HistoryPage";
+import AboutPage from "./pages/AboutPage";
 import Sidebar from "./components/Sidebar";
 
 function ProtectedRoute({ children }) {
@@ -55,6 +56,16 @@ export default function App() {
             <ProtectedRoute>
               <AppLayout>
                 <HistoryPage />
+              </AppLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/about"
+          element={
+            <ProtectedRoute>
+              <AppLayout>
+                <AboutPage />
               </AppLayout>
             </ProtectedRoute>
           }

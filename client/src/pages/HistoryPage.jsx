@@ -3,6 +3,14 @@ import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { fetchReports, downloadPdf, deleteReport } from "../api";
 import ReportDisplay from "../components/ReportDisplay";
+import {
+    AlertTriangleIcon,
+    ArrowLeftIcon,
+    DownloadIcon,
+    EyeIcon,
+    PlayIcon,
+    TrashIcon,
+} from "../components/Icons";
 
 const TYPE_CODE = {
     foundation: "FDN",
@@ -124,9 +132,10 @@ export default function HistoryPage() {
                     <div className="flex items-baseline gap-3 mb-2">
                         <button
                             onClick={() => setSelectedReport(null)}
-                            className="bg-transparent border-none cursor-pointer mono text-[10px] tracking-[0.18em] uppercase text-[var(--color-text-secondary)] hover:text-[var(--color-accent-light)] transition-colors"
+                            className="bg-transparent border-none cursor-pointer mono text-[10px] tracking-[0.18em] uppercase text-[var(--color-text-secondary)] hover:text-[var(--color-accent-light)] transition-colors inline-flex items-center gap-1.5"
                         >
-                            ← /history
+                            <ArrowLeftIcon size={12} />
+                            <span>/history</span>
                         </button>
                         <span className="label-mono text-[var(--color-text-faint)]">·</span>
                         <span className="label-mono">{selectedReport.id?.slice(0, 8)}</span>
@@ -224,8 +233,8 @@ export default function HistoryPage() {
             </header>
 
             {error && (
-                <div className="flex items-start gap-3 px-4 py-3 border border-[rgba(239,68,68,0.4)] bg-[rgba(239,68,68,0.06)] text-[var(--color-danger)] text-xs mb-6 animate-fade-up">
-                    <span className="mono pt-0.5">ERR</span>
+                <div className="flex items-start gap-3 px-4 py-3 rounded-[3px] border border-[rgba(239,68,68,0.4)] bg-[rgba(239,68,68,0.06)] text-[var(--color-danger)] text-xs mb-6 animate-fade-up">
+                    <AlertTriangleIcon size={14} className="shrink-0 mt-0.5" />
                     <span className="flex-1">{error}</span>
                 </div>
             )}
@@ -308,42 +317,47 @@ export default function HistoryPage() {
                                 <div className="flex items-center gap-1.5 justify-end flex-wrap">
                                     <button
                                         onClick={() => { setSelectedReport(report); setViewType(report.initial_report ? "initial" : "final"); }}
-                                        className="btn-secondary px-2.5 py-1.5 mono text-[10px] uppercase tracking-wider cursor-pointer"
+                                        className="btn-secondary px-2.5 py-1.5 mono text-[10px] uppercase tracking-wider cursor-pointer inline-flex items-center gap-1.5"
                                     >
-                                        View
+                                        <EyeIcon size={12} />
+                                        <span>View</span>
                                     </button>
                                     {report.initial_report && !report.final_report && (
                                         <button
                                             onClick={() => handleResume(report)}
-                                            className="px-2.5 py-1.5 mono text-[10px] uppercase tracking-wider border border-[rgba(245,158,11,0.4)] text-[var(--color-warning)] hover:bg-[rgba(245,158,11,0.08)] transition-colors cursor-pointer bg-transparent"
+                                            className="px-2.5 py-1.5 mono text-[10px] uppercase tracking-wider border border-[rgba(245,158,11,0.4)] text-[var(--color-warning)] hover:bg-[rgba(245,158,11,0.08)] transition-colors cursor-pointer bg-transparent inline-flex items-center gap-1.5"
                                             title="Resume — provide missing data and generate final report"
                                         >
-                                            Resume
+                                            <PlayIcon size={11} />
+                                            <span>Resume</span>
                                         </button>
                                     )}
                                     {report.initial_report && (
                                         <button
                                             onClick={() => handleDownload(report, "initial")}
-                                            className="px-2.5 py-1.5 mono text-[10px] uppercase tracking-wider border border-[var(--color-border-medium)] text-[var(--color-text-secondary)] hover:text-[var(--color-accent-light)] hover:border-[var(--color-accent)] transition-colors cursor-pointer bg-transparent"
+                                            className="px-2.5 py-1.5 mono text-[10px] uppercase tracking-wider border border-[var(--color-border-medium)] text-[var(--color-text-secondary)] hover:text-[var(--color-accent-light)] hover:border-[var(--color-accent)] transition-colors cursor-pointer bg-transparent inline-flex items-center gap-1.5"
                                         >
-                                            ↓ Init
+                                            <DownloadIcon size={12} />
+                                            <span>Init</span>
                                         </button>
                                     )}
                                     {report.final_report && (
                                         <button
                                             onClick={() => handleDownload(report, "final")}
-                                            className="px-2.5 py-1.5 mono text-[10px] uppercase tracking-wider border border-[rgba(16,185,129,0.4)] text-[var(--color-success)] hover:bg-[rgba(16,185,129,0.08)] transition-colors cursor-pointer bg-transparent"
+                                            className="px-2.5 py-1.5 mono text-[10px] uppercase tracking-wider border border-[rgba(16,185,129,0.4)] text-[var(--color-success)] hover:bg-[rgba(16,185,129,0.08)] transition-colors cursor-pointer bg-transparent inline-flex items-center gap-1.5"
                                         >
-                                            ↓ Final
+                                            <DownloadIcon size={12} />
+                                            <span>Final</span>
                                         </button>
                                     )}
                                     <button
                                         onClick={() => handleDelete(report.id)}
                                         disabled={isDeleting}
-                                        className="btn-danger px-2.5 py-1.5 mono text-[10px] uppercase tracking-wider cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                                        className="btn-danger px-2.5 py-1.5 mono text-[10px] uppercase tracking-wider cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
                                         title="Delete report"
                                     >
-                                        {isDeleting ? "…" : "Delete"}
+                                        <TrashIcon size={12} />
+                                        <span>{isDeleting ? "…" : "Delete"}</span>
                                     </button>
                                 </div>
                             </div>

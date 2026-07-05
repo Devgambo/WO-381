@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { downloadPdf } from "../api";
 import { useAuth } from "../context/AuthContext";
+import { DownloadIcon, FileTextIcon } from "./Icons";
 
 // react-markdown@10 escapes raw HTML by default — we never enable
 // rehype-raw, so model output like `<img onerror=...>` renders as
@@ -50,16 +51,18 @@ export default function ReportDisplay({ report, title, filenamePrefix, onError }
                 <div className="flex gap-2">
                     <button
                         onClick={handleDownloadMd}
-                        className="btn-secondary px-3 py-1.5 text-xs cursor-pointer mono uppercase tracking-wider"
+                        className="btn-secondary px-3 py-1.5 text-xs cursor-pointer mono uppercase tracking-wider inline-flex items-center gap-1.5"
                     >
-                        .md
+                        <FileTextIcon size={12} />
+                        <span>.md</span>
                     </button>
                     <button
                         onClick={handleDownloadPdf}
                         disabled={downloading}
-                        className="btn-secondary px-3 py-1.5 text-xs cursor-pointer mono uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="btn-secondary px-3 py-1.5 text-xs cursor-pointer mono uppercase tracking-wider disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
                     >
-                        {downloading ? "…" : ".pdf"}
+                        <DownloadIcon size={12} />
+                        <span>{downloading ? "…" : ".pdf"}</span>
                     </button>
                 </div>
             </div>

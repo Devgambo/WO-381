@@ -11,6 +11,7 @@ import {
     validateInput,
 } from "../api";
 import { useAuth } from "../context/AuthContext";
+import { AlertTriangleIcon, ArrowRightIcon, InfoIcon, RefreshIcon, XIcon } from "../components/Icons";
 
 const STEPS = [
     { num: 1, label: "Upload", aux: "Drawing intake" },
@@ -391,18 +392,22 @@ export default function DashboardPage() {
             <StepIndicator step={step} canNavigate={canNavigate} onJump={setStep} />
 
             {error && (
-                <div className="flex items-start gap-3 px-4 py-3 border border-[rgba(239,68,68,0.4)] bg-[rgba(239,68,68,0.06)] text-[var(--color-danger)] text-xs mb-6 animate-fade-up">
-                    <span className="mono pt-0.5">ERR</span>
+                <div className="flex items-start gap-3 px-4 py-3 rounded-[3px] border border-[rgba(239,68,68,0.4)] bg-[rgba(239,68,68,0.06)] text-[var(--color-danger)] text-xs mb-6 animate-fade-up">
+                    <AlertTriangleIcon size={14} className="shrink-0 mt-0.5" />
                     <span className="flex-1">{error}</span>
-                    <button onClick={() => setError(null)} className="bg-transparent border-none text-[var(--color-danger)] cursor-pointer mono text-xs">×</button>
+                    <button onClick={() => setError(null)} aria-label="Dismiss error" className="bg-transparent border-none text-[var(--color-danger)] cursor-pointer p-0.5">
+                        <XIcon size={12} />
+                    </button>
                 </div>
             )}
 
             {warning && (
-                <div className="flex items-start gap-3 px-4 py-3 border border-[rgba(245,158,11,0.4)] bg-[rgba(245,158,11,0.06)] text-[var(--color-warning)] text-xs mb-6 animate-fade-up">
-                    <span className="mono pt-0.5">WRN</span>
+                <div className="flex items-start gap-3 px-4 py-3 rounded-[3px] border border-[rgba(245,158,11,0.4)] bg-[rgba(245,158,11,0.06)] text-[var(--color-warning)] text-xs mb-6 animate-fade-up">
+                    <InfoIcon size={14} className="shrink-0 mt-0.5" />
                     <span className="flex-1">{warning}</span>
-                    <button onClick={() => setWarning(null)} className="bg-transparent border-none text-[var(--color-warning)] cursor-pointer mono text-xs">×</button>
+                    <button onClick={() => setWarning(null)} aria-label="Dismiss warning" className="bg-transparent border-none text-[var(--color-warning)] cursor-pointer p-0.5">
+                        <XIcon size={12} />
+                    </button>
                 </div>
             )}
 
@@ -449,7 +454,7 @@ export default function DashboardPage() {
                             className="btn-primary px-5 py-2.5 text-sm cursor-pointer disabled:cursor-not-allowed inline-flex items-center gap-2"
                         >
                             <span>{loading ? "Analysing…" : "Run extraction"}</span>
-                            <span className="mono">→</span>
+                            <ArrowRightIcon size={14} />
                         </button>
                     </div>
                 </section>
@@ -460,7 +465,7 @@ export default function DashboardPage() {
                     <SectionHeader index="02" title="Initial extraction" hint="Phase 1–4 transcription" />
                     <ReportDisplay
                         report={initialReport}
-                        title="Phase 1 → Phase 4 report"
+                        title="Phase 1–4 report"
                         filenamePrefix={`${drawingType || "unknown"}_init_${reportTimestamp || ""}`}
                         onError={(msg) => setError(msg)}
                     />
@@ -476,7 +481,7 @@ export default function DashboardPage() {
                             className="btn-primary px-5 py-2.5 text-sm cursor-pointer inline-flex items-center gap-2"
                         >
                             <span>Resolve gaps</span>
-                            <span className="mono">→</span>
+                            <ArrowRightIcon size={14} />
                         </button>
                     </div>
                 </section>
@@ -548,7 +553,7 @@ export default function DashboardPage() {
                                     className="btn-primary px-5 py-2.5 text-sm cursor-pointer disabled:cursor-not-allowed inline-flex items-center gap-2"
                                 >
                                     <span>{validating ? "Validating…" : loading ? "Generating…" : "Validate & generate"}</span>
-                                    <span className="mono">→</span>
+                                    <ArrowRightIcon size={14} />
                                 </button>
                             </div>
                         </form>
@@ -565,7 +570,7 @@ export default function DashboardPage() {
                                     className="btn-primary px-5 py-2.5 text-sm cursor-pointer disabled:cursor-not-allowed inline-flex items-center gap-2"
                                 >
                                     <span>{loading ? "Generating…" : "Generate final report"}</span>
-                                    <span className="mono">→</span>
+                                    <ArrowRightIcon size={14} />
                                 </button>
                             </div>
                         </>
@@ -589,9 +594,10 @@ export default function DashboardPage() {
                 <div className="mt-8 flex items-center gap-3">
                     <button
                         onClick={handleReset}
-                        className="btn-secondary px-4 py-2 text-xs cursor-pointer mono uppercase tracking-wider"
+                        className="btn-secondary px-4 py-2 text-xs cursor-pointer mono uppercase tracking-wider inline-flex items-center gap-2"
                     >
-                        Start new analysis
+                        <RefreshIcon size={13} />
+                        <span>Start new analysis</span>
                     </button>
                 </div>
             )}

@@ -1,5 +1,6 @@
 import { useCallback } from "react";
 import { useDropzone } from "react-dropzone";
+import { UploadIcon, XIcon } from "./Icons";
 
 const ACCEPTED = {
   "application/pdf": [".pdf"],
@@ -39,8 +40,13 @@ export default function FileUpload({ files, setFiles }) {
       >
         <input {...getInputProps()} />
         <div className="flex flex-col items-center gap-2">
-          <div className="w-10 h-10 grid place-items-center border border-[var(--color-border-medium)] mono text-[var(--color-text-secondary)] text-xs">
-            DROP
+          <div className={`w-11 h-11 grid place-items-center border rounded-[3px] transition-colors
+            ${isDragActive
+              ? "border-[var(--color-accent)] text-[var(--color-accent-light)]"
+              : "border-[var(--color-border-medium)] text-[var(--color-text-secondary)]"
+            }`}
+          >
+            <UploadIcon size={18} />
           </div>
           {isDragActive ? (
             <p className="text-sm font-medium text-[var(--color-text-primary)]">
@@ -83,9 +89,10 @@ export default function FileUpload({ files, setFiles }) {
                 <button
                   onClick={() => removeFile(i)}
                   title="Remove file"
-                  className="w-6 h-6 grid place-items-center text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:bg-[rgba(239,68,68,0.08)] transition-colors cursor-pointer bg-transparent border-none mono text-xs"
+                  aria-label={`Remove ${f.name}`}
+                  className="w-6 h-6 grid place-items-center rounded-[3px] text-[var(--color-text-muted)] hover:text-[var(--color-danger)] hover:bg-[rgba(239,68,68,0.08)] transition-colors cursor-pointer bg-transparent border-none"
                 >
-                  ✕
+                  <XIcon size={13} />
                 </button>
               </div>
             ))}
